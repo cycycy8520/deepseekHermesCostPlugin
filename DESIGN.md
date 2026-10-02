@@ -590,12 +590,14 @@ interface DshClientManifest {
 
 | 形态 | 示例 |
 |---|---|
-| 包名 | `dsh-cost-meter`（文档约定：`dsh-xxx` 或 `@作者/插件名`） |
-| GitHub 仓库 | `https://github.com/<作者>/dsh-cost-meter` |
+| 包名 | `dsh-cost-meter`（文档约定：`dsh-xxx` 或 `@作者/插件名`）——**本包未发布到 npm，所以这条目前不可用** |
+| GitHub 仓库 | `https://github.com/cycycy8520/deepseekHermesCostPlugin` ← **本包的唯一可粘贴字符串** |
 | 本地目录 | 绝对路径 |
 | 压缩包 | 也被识别（`installSubjectTarball`） |
 
 **"让 AI 一下子装上"的关键就是 README**——GUI 的引导语明确说"从插件的 README 复制"。所以 README 里必须有一个可直接粘贴的字符串。
+
+> ⚠️ **踩过的坑**：README 初稿把"包名"放在第一位、GitHub 地址还写着 `<作者>` 占位符。包名是最自然的写法，但它对一个没上 npm 的包**必然失败**，而且失败得很难懂（找不到包）。凡是"最自然但当前不可用"的安装方式，都不能排在第一位——宁可写在警告里。
 
 ### 15.5 本包已落实的合规项
 

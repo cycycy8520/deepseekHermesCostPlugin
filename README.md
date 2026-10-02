@@ -8,27 +8,31 @@
 
 ## 安装
 
-在 DeepSeek Harness 的 **设置 → 内置插件 → 添加插件** 里粘贴下面任意一项，然后点安装：
+在 DeepSeek Harness 的 **设置 → 内置插件 → 添加插件** 里粘贴下面这一行，然后点安装：
 
 ```
-dsh-cost-meter
+https://github.com/cycycy8520/deepseekHermesCostPlugin
 ```
 
 或者用命令行：
 
 ```sh
-dsh plugin add dsh-cost-meter
+dsh plugin add https://github.com/cycycy8520/deepseekHermesCostPlugin
 ```
 
 **其他安装方式**（GUI 同样支持）：
 
 | 方式 | 粘贴什么 |
 |---|---|
-| npm 包名 | `dsh-cost-meter` |
-| GitHub 仓库 | `https://github.com/<作者>/dsh-cost-meter` |
-| 本地目录 | 本机上插件目录的绝对路径 |
+| GitHub 仓库 | `https://github.com/cycycy8520/deepseekHermesCostPlugin` |
+| 本地目录 | 本机上插件目录的绝对路径（开发时用） |
+| tarball | `pnpm pack` 产出的 `.tgz` 路径 |
+
+> **本包尚未发布到 npm**，所以 `dsh plugin add dsh-cost-meter` 会失败——请用上面的 GitHub 地址。
 
 **安装后重启一次 DeepSeek Harness。** host 半边（价表命名空间）需要重启才会加载；客户端半边刷新页面即可。
+
+**不需要配置价格。** 价目表出厂内置（DeepSeek 全系 + 小米 MiMo + token-plan，含 2026-09-10 调价前后两个时期），装上即开始计价。
 
 ---
 
