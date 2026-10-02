@@ -1,0 +1,16 @@
+# 这个包会被 Harness 以 link: 方式直接读取工作区文件，
+# 行尾若随平台变化会造成"同一版本不同内容"。统一 LF。
+* text=auto eol=lf
+
+# 二进制（本包目前没有，留着防止以后误加）
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff2 binary
+
+# 让 GitHub 正确识别语言统计
+*.js text
+*.mjs text
+*.json text
+*.yml text
+*.md text

@@ -1,0 +1,56 @@
+{
+  "name": "dsh-cost-meter",
+  "version": "1.0.0",
+  "description": "DeepSeek Harness 的花费统计插件：按对话/项目/模型统计花费与 token，含整页仪表盘与日历热力图，每一笔请求按它自己发生时刻的时段价计费。",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/cycycy8520/deepseekHermesCostPlugin.git"
+  },
+  "homepage": "https://github.com/cycycy8520/deepseekHermesCostPlugin#readme",
+  "bugs": {
+    "url": "https://github.com/cycycy8520/deepseekHermesCostPlugin/issues"
+  },
+  "type": "module",
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "plugin",
+    "bundle",
+    "cost",
+    "spend",
+    "usage",
+    "tokens",
+    "billing",
+    "dashboard"
+  ],
+  "engines": {
+    "dsh": ">=0.1.0-0",
+    "node": ">=22"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js"
+  },
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-conversation",
+        "@deepseek-ai/dsh-client-ui-sidebar",
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    }
+  }
+}
