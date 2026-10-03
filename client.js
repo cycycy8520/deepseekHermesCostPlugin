@@ -344,6 +344,8 @@ window.__ModuleLoader__.load({
       reportOther: '其他',
       reportNoProject: '未归入项目',
       panelTitle: '花费统计',
+      costAllTime: '花费为全时段',
+      costInRange: '花费为所选时间范围',
       dashTitle: '账号花费',
       dashBack: '返回全部项目',
       dashAllTime: '全部时间',
@@ -471,6 +473,8 @@ window.__ModuleLoader__.load({
       reportOther: 'Other',
       reportNoProject: 'No project',
       panelTitle: 'Spend',
+      costAllTime: 'Cost is all-time',
+      costInRange: 'Cost is within the selected range',
       dashTitle: 'Account spend',
       dashBack: 'Back to all projects',
       dashAllTime: 'All time',
@@ -1744,10 +1748,12 @@ window.__ModuleLoader__.load({
          * Swatch and name on the left, then the amount and the share in the same
          * two right-hand columns the bars use, so a donut and a bar list can sit
          * side by side without the numbers jumping.
-         * @param props - `{ color, label, text, share }`.
+         * @param props - `{ color, label, text, share, dim }`.
          */
-        function LegendRow({ color, label, text, share }) {
-          return h('div', { style: { ...ROW, ...MUTED, marginBottom: 6 } },
+        function LegendRow({ color, label, text, share, dim = false }) {
+          return h('div', {
+            style: { ...ROW, ...MUTED, marginBottom: 6, ...(dim ? { opacity: 0.55 } : {}) },
+          },
             h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 8, minWidth: 0 } },
               h('span', {
                 style: {
@@ -1772,6 +1778,11 @@ window.__ModuleLoader__.load({
          * directly; four full-width bars stated it as four lengths the reader had
          * to compare. Ranking stays on bars — order and magnitude are the point
          * there, and a many-slice pie would be worse than the list.
+         *
+         * Every bucket is listed, including a zero one: "cache writes cost
+         * nothing" is a fact about the tariff, not an absence of data, and a row
+         * that appears on one view and not the other is what made the two views
+         * look like two products. Zero rows are dimmed instead of dropped.
          * @param props - `{ title, slices, money, empty, style }`.
          */
         function Composition({ title, slices, money, empty, style }) {
@@ -1780,9 +1791,9 @@ window.__ModuleLoader__.load({
           return h('div', { style: { ...GROUP, ...style } },
             h('div', { style: { fontWeight: 600, marginBottom: 10 } }, title),
             total <= 0
-              ? h('div', { style: FAINTED }, empty)
+              ? h(EmptyState, { title: empty, compact: true })
               : h('div', { style: { display: 'flex', gap: 24, alignItems: 'center', flexWrap: 'wrap' } },
-                h(Pie, { slices, size: 168 }),
+                h(Pie, { slices: slices.filter(slice => slice.value > 0), size: 168 }),
                 h('div', { style: { flex: '1 1 240px', minWidth: 0 } },
                   ...slices.map((slice, index) => h(LegendRow, {
                     key: String(index),
@@ -1790,6 +1801,7 @@ window.__ModuleLoader__.load({
                     label: slice.label,
                     text: money(slice.value),
                     share: share(slice.value),
+                    dim: !(slice.value > 0),
                   }))),
               ),
           )
@@ -1837,6 +1849,115 @@ window.__ModuleLoader__.load({
           return [...head, { label: t('reportOther'), value: rest }]
         }
 
+        /**
+         * One statistic in a page's summary row.
+         *
+         * Both views answer with figures, and they used to draw them at two
+         * different sizes with two different paddings — the same "total spend"
+         * read as a different element depending on the tab. The card is shared;
+         * which figures a view shows is that view's business.
+         * @param props - `{ value, label, note }`.
+         */
+        function StatCard({ value, label, note }) {
+          return h('div', { style: { minWidth: 128 } },
+            h('div', { style: { fontSize: size(24), fontWeight: 600, lineHeight: 1.3 } }, value),
+            h('div', { style: FAINTED }, label),
+            note === undefined ? null : h('div', { style: { ...FAINTED, marginTop: 2 } }, note),
+          )
+        }
+
+        /** The summary row both views open with; `stats` are {@link StatCard} props. */
+        function StatRow({ stats }) {
+          return h('div', { style: GROUP },
+            h('div', { style: { display: 'flex', gap: 28, flexWrap: 'wrap' } },
+              ...stats.map(stat => h(StatCard, { key: stat.label, ...stat }))),
+          )
+        }
+
+        /**
+         * The one empty state.
+         *
+         * `compact` is the in-chart variant: a chart with no data states it in
+         * place, while a page with no data states it where the page would be.
+         * Both come from here so "no data" cannot look like two different bugs.
+         * @param props - `{ title, hint, compact }`.
+         */
+        function EmptyState({ title, hint, compact = false }) {
+          if (compact === true) {
+            return h('div', { style: { ...FAINTED, padding: '4px 0' } }, title)
+          }
+          return h('div', { style: { maxWidth: 640, margin: '72px auto', textAlign: 'center' } },
+            h('div', { style: { fontSize: size(15), fontWeight: 600, marginBottom: 8 } }, title),
+            hint === undefined ? null : h('div', { style: MUTED }, hint),
+          )
+        }
+
+        /**
+         * The conversation detail table both views end with.
+         *
+         * One table, six columns, one pagination — the two views used to differ by
+         * a whole column (duration) and by what the cost column MEANT, which is
+         * the kind of difference that makes two numbers disagree without either
+         * being wrong. The cost basis is passed in and printed beside the pager,
+         * so the reader can see which one they are looking at.
+         * @param props - `{ rows, total, page, pageCount, onPage, costNote, money, projectOf }`.
+         */
+        function ConversationTable({ rows, total, page, pageCount, onPage, costNote, money, projectOf }) {
+          const cell = (content, extra) => h('td', {
+            style: { ...TD, ...(extra ?? {}), borderBottom: `1px solid ${hairline}` },
+          }, content)
+          return h('div', { style: GROUP },
+            h('div', { style: { fontWeight: 600, marginBottom: 10 } },
+              `${t('reportTop')} · ${t('reportCount', { count: total })}`),
+            h('div', { style: { overflowX: 'auto' } },
+              h('table', {
+                style: { width: '100%', minWidth: 640, tableLayout: 'fixed', borderCollapse: 'collapse' },
+              },
+                h('colgroup', null,
+                  h('col', { style: { width: '30%' } }),
+                  h('col', { style: { width: '18%' } }),
+                  h('col', { style: { width: '16%' } }),
+                  h('col', { style: { width: '12%' } }),
+                  h('col', { style: { width: '12%' } }),
+                  h('col', { style: { width: '12%' } }),
+                ),
+                h('thead', null, h('tr', null,
+                  h('th', { style: TH }, t('colConversation')),
+                  h('th', { style: TH }, t('colProject')),
+                  h('th', { style: TH }, t('colModel')),
+                  h('th', { style: { ...TH, textAlign: 'right' } }, t('colTokens')),
+                  h('th', { style: { ...TH, textAlign: 'right' } }, t('colDuration')),
+                  h('th', { style: { ...TH, textAlign: 'right' } }, t('colCost')),
+                )),
+                h('tbody', null, ...rows.map(row => h('tr', { key: row.id },
+                  cell(h('span', {
+                    title: row.title,
+                    style: { display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+                  }, row.title)),
+                  cell(projectOf(row.workspaceId), FAINTED),
+                  cell(row.models.length === 1 ? row.models[0] : t('reportMultiModel'), FAINTED),
+                  cell(formatTokens(row.tokens), { ...FAINTED, textAlign: 'right' }),
+                  cell(row.hasStats ? formatDuration(row.llmMs + row.toolMs) : '—',
+                    { ...FAINTED, textAlign: 'right' }),
+                  cell(money(row.cost), { textAlign: 'right' }),
+                ))),
+              ),
+            ),
+            h('div', { style: { ...MUTED, display: 'flex', alignItems: 'center', gap: 10, marginTop: 10 } },
+              h('button', {
+                type: 'button', style: BUTTON, disabled: page === 0,
+                onClick: () => onPage(Math.max(0, page - 1)),
+              }, t('reportPrev')),
+              h('span', null, t('reportPage', { page: page + 1, pages: pageCount, total })),
+              h('button', {
+                type: 'button', style: BUTTON, disabled: page >= pageCount - 1,
+                onClick: () => onPage(Math.min(pageCount - 1, page + 1)),
+              }, t('reportNext')),
+              costNote === undefined ? null : h('span', { style: FAINTED }, costNote),
+            ),
+          )
+        }
+
         function CostReport(props) {
           const { useSessions, useWorkspaces } = props
           const [, bump] = React.useReducer(count => count + 1, 0)
@@ -1875,6 +1996,10 @@ window.__ModuleLoader__.load({
           const all = []
           for (const [id, row] of ledger) {
             if (row.cost === 0 && row.credits === 0 && totalOf(row.charged) === 0) continue
+            // The timing counters ride along so the shared detail table can show
+            // its duration column on this view too; they are not sliceable by
+            // date, which is why they stay all-time figures.
+            const stats = byId[id]?.projectionValues?.sessionStats
             all.push({
               id,
               workspaceId: ownerOf.get(id)?.workspaceId ?? '',
@@ -1883,6 +2008,9 @@ window.__ModuleLoader__.load({
               credits: row.credits,
               tokens: totalOf(row.charged),
               byBucket: row.byBucket,
+              hasStats: stats !== undefined,
+              llmMs: stats?.llmMs ?? 0,
+              toolMs: stats?.toolMs ?? 0,
               models: typeof row.model === 'string' && row.model.length > 0
                 ? row.model.split(', ')
                 : [],
@@ -1940,52 +2068,47 @@ window.__ModuleLoader__.load({
           const pageRows = ranked.slice(current * REPORT_PAGE, (current + 1) * REPORT_PAGE)
 
           const share = value => (totalCost > 0 ? `${(value / totalCost * 100).toFixed(1)}%` : '—')
-          const stat = (value, label) => h('div', { key: label, style: { minWidth: 110 } },
-            h('div', { style: { fontSize: size(20), fontWeight: 600 } }, value),
-            h('div', { style: FAINTED }, label),
-          )
-          const cell = (content, extra) => h('td', {
-            style: { ...TD, ...(extra ?? {}), borderBottom: `1px solid ${hairline}` },
-          }, content)
+
+          // No data at all is a page-level state, not a line of warning text: the
+          // same component the account view uses says it the same way here.
+          if (all.length === 0) {
+            return h(EmptyState, { title: t('dashEmpty'), hint: t('dashEmptyHint') })
+          }
 
           const body = h(React.Fragment, null,
-            all.length === 0 && h('div', { style: { ...MUTED, ...WARN } }, t('reportEmpty')),
+            h('div', { style: { ...MUTED, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 } },
+              t('reportScope'),
+              h('select', {
+                style: { ...SELECT, width: 'min(300px, 100%)' },
+                value: scope,
+                onChange: event => { setScope(event.target.value); setPage(0) },
+              },
+                h('option', { value: '', style: OPTION }, `${t('reportAllProjects')}（${all.length}）`),
+                ...projects.map(group => h('option', {
+                  key: group.workspaceId || 'none', value: group.workspaceId, style: OPTION,
+                }, `${projectLabel(group.workspaceId)} · ${group.count}`)),
+              ),
+            ),
 
-            all.length > 0 && h(React.Fragment, null,
-              h('div', { style: { ...MUTED, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 } },
-                t('reportScope'),
-                h('select', {
-                  style: { ...SELECT, width: 'min(300px, 100%)' },
-                  value: scope,
-                  onChange: event => { setScope(event.target.value); setPage(0) },
+            h(StatRow, {
+              stats: [
+                {
+                  value: money(totalCost) + (totalCredits > 0 ? ` + ${formatCredits(totalCredits)}` : ''),
+                  label: t('reportTotalCost'),
                 },
-                  h('option', { value: '', style: OPTION }, `${t('reportAllProjects')}（${all.length}）`),
-                  ...projects.map(group => h('option', {
-                    key: group.workspaceId || 'none', value: group.workspaceId, style: OPTION,
-                  }, `${projectLabel(group.workspaceId)} · ${group.count}`)),
-                ),
-              ),
-              h('div', { style: { ...FAINTED, marginBottom: 12, maxWidth: 780 } }, t('reportIntro')),
+                { value: formatTokens(totalTokens), label: t('reportTotalTokens') },
+                { value: String(projects.length), label: t('reportProjects') },
+                { value: String(rows.length), label: t('reportConversations') },
+              ],
+            }),
 
-              h('div', { style: GROUP },
-                h('div', { style: { display: 'flex', gap: 28, flexWrap: 'wrap' } },
-                  stat(money(totalCost) + (totalCredits > 0 ? ` + ${formatCredits(totalCredits)}` : ''), t('reportTotalCost')),
-                  stat(formatTokens(totalTokens), t('reportTotalTokens')),
-                  stat(String(projects.length), t('reportProjects')),
-                  stat(String(rows.length), t('reportConversations')),
-                ),
-              ),
-
-              h('div', { style: GROUP },
-                h(Composition, {
-                  title: t('reportByBucket'),
-                  slices: buckets.filter(entry => entry.value > 0 || entry.key !== 'cacheWrite').map(entry => ({
-                    label: t(entry.key), value: entry.value, color: entry.color,
-                  })),
-                  money,
-                  empty: t('reportEmpty'),
-                }),
-              ),
+            h(Composition, {
+              title: t('reportByBucket'),
+              slices: buckets.map(entry => ({ label: t(entry.key), value: entry.value, color: entry.color })),
+              money,
+              empty: t('reportEmpty'),
+              style: { marginBottom: 14 },
+            }),
 
               h('div', { style: { display: 'flex', gap: 14, flexWrap: 'wrap' } },
                 h('div', { style: { ...GROUP, flex: REPORT_COLUMN } },
@@ -2020,50 +2143,16 @@ window.__ModuleLoader__.load({
                 ),
               ),
 
-              h('div', { style: GROUP },
-                h('div', { style: { fontWeight: 600, marginBottom: 10 } },
-                  `${t('reportTop')} · ${t('reportCount', { count: ranked.length })}`),
-                h('div', { style: { overflowX: 'auto' } },
-                  h('table', { style: { width: '100%', minWidth: 520, tableLayout: 'fixed', borderCollapse: 'collapse' } },
-                    h('colgroup', null,
-                      h('col', { style: { width: '34%' } }),
-                      h('col', { style: { width: '20%' } }),
-                      h('col', { style: { width: '18%' } }),
-                      h('col', { style: { width: '14%' } }),
-                      h('col', { style: { width: '14%' } }),
-                    ),
-                    h('thead', null, h('tr', null,
-                      h('th', { style: TH }, t('colConversation')),
-                      h('th', { style: TH }, t('colProject')),
-                      h('th', { style: TH }, t('colModel')),
-                      h('th', { style: { ...TH, textAlign: 'right' } }, t('colTokens')),
-                      h('th', { style: { ...TH, textAlign: 'right' } }, t('colCost')),
-                    )),
-                    h('tbody', null, ...pageRows.map(row => h('tr', { key: row.id },
-                      cell(h('span', {
-                        title: row.title,
-                        style: { display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-                      }, row.title)),
-                      cell(projectLabel(row.workspaceId), FAINTED),
-                      cell(row.models.length === 1 ? row.models[0] : t('reportMultiModel'), FAINTED),
-                      cell(formatTokens(row.tokens), { ...FAINTED, textAlign: 'right' }),
-                      cell(money(row.cost), { textAlign: 'right' }),
-                    ))),
-                  ),
-                ),
-                h('div', { style: { ...MUTED, display: 'flex', alignItems: 'center', gap: 10, marginTop: 10 } },
-                  h('button', {
-                    type: 'button', style: BUTTON, disabled: current === 0,
-                    onClick: () => setPage(Math.max(0, current - 1)),
-                  }, t('reportPrev')),
-                  h('span', null, t('reportPage', { page: current + 1, pages: pageCount, total: ranked.length })),
-                  h('button', {
-                    type: 'button', style: BUTTON, disabled: current >= pageCount - 1,
-                    onClick: () => setPage(Math.min(pageCount - 1, current + 1)),
-                  }, t('reportNext')),
-                ),
-              ),
-            ),
+            h(ConversationTable, {
+              rows: pageRows,
+              total: ranked.length,
+              page: current,
+              pageCount,
+              onPage: setPage,
+              costNote: t('costAllTime'),
+              money,
+              projectOf: projectLabel,
+            }),
           )
 
           // This is a main panel now, so it already owns the full column; the
@@ -2416,18 +2505,9 @@ window.__ModuleLoader__.load({
           const heatTotal = dayKeys.reduce((sum, day) => sum + valueOfDay(dayTotals.get(day)), 0)
 
           const shareOf = value => (totalCost > 0 ? `${(value / totalCost * 100).toFixed(1)}%` : '—')
-          const card = (value, label, note) => h('div', { key: label, style: { minWidth: 150 } },
-            h('div', { style: { fontSize: size(30), fontWeight: 600, lineHeight: 1.25 } }, value),
-            h('div', { style: FAINTED }, label),
-            note !== undefined && h('div', { style: { ...FAINTED, marginTop: 2 } }, note),
-          )
 
-          const empty = all.length === 0
-          if (empty) {
-            return h('div', { style: { maxWidth: 640, margin: '80px auto', textAlign: 'center' } },
-              h('div', { style: { fontSize: size(16), fontWeight: 600, marginBottom: 8 } }, t('dashEmpty')),
-              h('div', { style: MUTED }, t('dashEmptyHint')),
-            )
+          if (all.length === 0) {
+            return h(EmptyState, { title: t('dashEmpty'), hint: t('dashEmptyHint') })
           }
 
           const chip = (active, label, onClick) => h('button', {
@@ -2470,15 +2550,27 @@ window.__ModuleLoader__.load({
             ),
 
             // ---- statistic cards (rule 1: three questions above the fold)
-            h('div', { style: { ...GROUP, display: 'flex', gap: 28, flexWrap: 'wrap' } },
-              card(money(totalCost) + (totalCredits > 0 ? ` + ${formatCredits(totalCredits)}` : ''),
-                t('reportTotalCost')),
-              card(formatTokens(totalTokens), t('reportTotalTokens')),
-              card(formatDuration(llmMs), t('dashLlmTime'), range === 'all' ? undefined : t('dashAllTimeOnly')),
-              card(String(conversations), t('reportConversations')),
-              card(formatTokens(cacheReadTokens), t('dashCacheRead')),
-              card(formatDuration(toolMs), t('dashToolTime'), range === 'all' ? undefined : t('dashAllTimeOnly')),
-            ),
+            h(StatRow, {
+              stats: [
+                {
+                  value: money(totalCost) + (totalCredits > 0 ? ` + ${formatCredits(totalCredits)}` : ''),
+                  label: t('reportTotalCost'),
+                },
+                { value: formatTokens(totalTokens), label: t('reportTotalTokens') },
+                {
+                  value: formatDuration(llmMs),
+                  label: t('dashLlmTime'),
+                  note: range === 'all' ? undefined : t('dashAllTimeOnly'),
+                },
+                { value: String(conversations), label: t('reportConversations') },
+                { value: formatTokens(cacheReadTokens), label: t('dashCacheRead') },
+                {
+                  value: formatDuration(toolMs),
+                  label: t('dashToolTime'),
+                  note: range === 'all' ? undefined : t('dashAllTimeOnly'),
+                },
+              ],
+            }),
             undated.length > 0 && range !== 'all' && h('div', { style: { ...FAINTED, marginBottom: 12 } },
               t('dashUndated', { count: undated.length })),
 
@@ -2561,59 +2653,16 @@ window.__ModuleLoader__.load({
             ),
 
             // ---- detail (rule 10: always paginated)
-            h('div', { style: GROUP },
-              h('div', { style: { fontWeight: 600, marginBottom: 10 } },
-                `${t('reportTop')} · ${t('reportCount', { count: ranked.length })}`),
-              h('table', { style: { width: '100%', minWidth: 640, tableLayout: 'fixed', borderCollapse: 'collapse' } },
-                h('colgroup', null,
-                  h('col', { style: { width: '30%' } }),
-                  h('col', { style: { width: '18%' } }),
-                  h('col', { style: { width: '16%' } }),
-                  h('col', { style: { width: '12%' } }),
-                  h('col', { style: { width: '12%' } }),
-                  h('col', { style: { width: '12%' } }),
-                ),
-                h('thead', null, h('tr', null,
-                  h('th', { style: TH }, t('colConversation')),
-                  h('th', { style: TH }, t('colProject')),
-                  h('th', { style: TH }, t('colModel')),
-                  h('th', { style: { ...TH, textAlign: 'right' } }, t('colTokens')),
-                  h('th', { style: { ...TH, textAlign: 'right' } }, t('colDuration')),
-                  h('th', { style: { ...TH, textAlign: 'right' } }, t('colCost')),
-                )),
-                h('tbody', null, ...pageRows.map(row => h('tr', { key: row.id },
-                  h('td', { style: { ...TD, borderBottom: `1px solid ${hairline}` } },
-                    h('span', {
-                      title: row.title,
-                      style: { display: 'block', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-                    }, row.title)),
-                  h('td', { style: { ...TD, ...FAINTED, borderBottom: `1px solid ${hairline}` } },
-                    projectTitle(row.workspaceId)),
-                  h('td', { style: { ...TD, ...FAINTED, borderBottom: `1px solid ${hairline}` } },
-                    row.models.length === 1 ? row.models[0] : t('reportMultiModel')),
-                  h('td', {
-                    style: { ...TD, ...FAINTED, textAlign: 'right', borderBottom: `1px solid ${hairline}` },
-                  }, formatTokens(row.tokens)),
-                  h('td', {
-                    style: { ...TD, ...FAINTED, textAlign: 'right', borderBottom: `1px solid ${hairline}` },
-                  }, row.hasStats ? formatDuration(row.llmMs + row.toolMs) : '—'),
-                  h('td', {
-                    style: { ...TD, textAlign: 'right', borderBottom: `1px solid ${hairline}` },
-                  }, money(row.viewedCost)),
-                ))),
-              ),
-              h('div', { style: { ...MUTED, display: 'flex', alignItems: 'center', gap: 10, marginTop: 10 } },
-                h('button', {
-                  type: 'button', style: BUTTON, disabled: current === 0,
-                  onClick: () => setPage(Math.max(0, current - 1)),
-                }, t('reportPrev')),
-                h('span', null, t('reportPage', { page: current + 1, pages: pageCount, total: ranked.length })),
-                h('button', {
-                  type: 'button', style: BUTTON, disabled: current >= pageCount - 1,
-                  onClick: () => setPage(Math.min(pageCount - 1, current + 1)),
-                }, t('reportNext')),
-              ),
-            ),
+            h(ConversationTable, {
+              rows: pageRows,
+              total: ranked.length,
+              page: current,
+              pageCount,
+              onPage: setPage,
+              costNote: t('costInRange'),
+              money,
+              projectOf: projectTitle,
+            }),
           )
         }
 
@@ -2681,6 +2730,10 @@ window.__ModuleLoader__.load({
                   { value: 'projects', label: t('reportTitle') },
                 ],
               }),
+              // One line for the whole panel, not one per view: both views read
+              // the same ledger, and a sentence that appears on only one tab is
+              // how the two came to feel like two products.
+              h('div', { style: { ...FAINTED, marginTop: 10, maxWidth: 820 } }, t('reportIntro')),
             ),
             tab === 'account' ? h(CostDashboard, props) : h(CostReport, props),
           )

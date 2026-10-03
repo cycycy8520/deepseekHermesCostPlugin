@@ -282,7 +282,7 @@ check('both view tabs render',
   accountText.includes(accountTab) && accountText.includes(projectsTab),
   `${accountTab} / ${projectsTab}`)
 check('account spend is the default view',
-  accountText.includes(zhStrings.dashActivity) && !accountText.includes(zhStrings.reportScope),
+  accountText.includes(zhStrings.dashActivity) && !accountText.includes(zhStrings.reportByModel),
   accountText.slice(0, 90))
 check('dashboard shows a priced total', /¥0\.13/.test(accountText), accountText.slice(0, 100))
 
@@ -320,13 +320,61 @@ const headerBands = treeNodes(accountTree)
   .map(node => String(node.props?.style?.background ?? ''))
   .filter(background => background.includes('Canvas 9'))
 check('no grey band sits behind the page header', headerBands.length === 0, headerBands[0] ?? 'none')
+let projectsTree = null
 if (projectsTabButton !== undefined) {
   projectsTabButton.props.onClick()
-  const projectsText = flatten(renderSurface(
-    React.createElement(costPanel.component, shellProps), true)).replace(/\s+/g, ' ')
+  projectsTree = renderSurface(React.createElement(costPanel.component, shellProps), true)
+  const projectsText = flatten(projectsTree).replace(/\s+/g, ' ')
   check('clicking it switches to the project view',
-    projectsText.includes(zhStrings.reportScope) && !projectsText.includes(zhStrings.dashActivity),
+    projectsText.includes(zhStrings.reportByModel) && !projectsText.includes(zhStrings.dashActivity),
     projectsText.slice(0, 90))
+
+  /* ------------------------------------------------- same module, same shape */
+
+  // The two views are independent implementations of the same report, and they
+  // had drifted: a shared module must render the same way on both, even where
+  // the figures differ. These pin the four unifications.
+  const styleOfNodes = tree => treeNodes(tree).map(node => node.props?.style ?? {})
+  // Legend rows all share one shape (`ROW` + the legend margin), so the bucket
+  // legend is identified by its labels: the project pie on the report view draws
+  // the same swatch and the same row.
+  const bucketLabels = ['cacheRead', 'cacheMiss', 'cacheWrite', 'output'].map(key => zhStrings[key])
+  const legendRowsOf = tree => treeNodes(tree).filter(node => {
+    const style = node.props?.style ?? {}
+    if (style.justifyContent !== 'space-between' || style.marginBottom !== 6) return false
+    return bucketLabels.includes(String(flatten(node.children)).trim().split(' ')[0])
+  }).length
+  const headersOf = tree => treeNodes(tree)
+    .filter(node => node.type === 'th').map(node => flatten(node.children)).join('|')
+  const maxFontOf = tree => {
+    const sizes = styleOfNodes(tree)
+      .map(style => /calc\((\d+(?:\.\d+)?)px/.exec(String(style.fontSize ?? '')))
+      .filter(Boolean).map(match => Number(match[1]))
+    return sizes.length === 0 ? 0 : Math.max(...sizes)
+  }
+  const statCardsOf = tree => styleOfNodes(tree).filter(style => style.minWidth === 128).length
+  const dimmedLegendOf = tree => styleOfNodes(tree).filter(style => style.opacity === 0.55).length
+
+  const accountTextNow = flatten(accountTree).replace(/\s+/g, ' ')
+  const projectsTextNow = flatten(projectsTree).replace(/\s+/g, ' ')
+
+  check('both views list every billing bucket',
+    legendRowsOf(accountTree) === 4 && legendRowsOf(projectsTree) === 4,
+    `account=${legendRowsOf(accountTree)} projects=${legendRowsOf(projectsTree)}`)
+  check('the zero bucket is dimmed, not dropped',
+    dimmedLegendOf(accountTree) >= 1,
+    `dimmed rows=${dimmedLegendOf(accountTree)}`)
+  check('both views render the same detail columns',
+    headersOf(accountTree) === headersOf(projectsTree) && headersOf(accountTree).split('|').length === 6,
+    headersOf(accountTree))
+  check('both views size their summary figures the same',
+    statCardsOf(accountTree) > 0 && maxFontOf(accountTree) === maxFontOf(projectsTree),
+    `account max=${maxFontOf(accountTree)}px cards=${statCardsOf(accountTree)}`)
+  check('the panel note belongs to the panel, not to one tab',
+    accountTextNow.includes(zhStrings.reportIntro) && projectsTextNow.includes(zhStrings.reportIntro))
+  check('both views state their cost basis',
+    accountTextNow.includes(zhStrings.costInRange) && projectsTextNow.includes(zhStrings.costAllTime),
+    `${zhStrings.costInRange} / ${zhStrings.costAllTime}`)
 }
 
 const settingsEntry = registrations.find(item => item.spec?.name === 'settings.section')
@@ -393,7 +441,7 @@ const fontSizes = styles
 check('nothing renders below 12px at the default size',
   fontSizes.length > 0 && Math.min(...fontSizes) >= 12,
   `min=${Math.min(...fontSizes)}px across ${fontSizes.length} sizes`)
-check('headline figures stay large', Math.max(...fontSizes) >= 30, `max=${Math.max(...fontSizes)}px`)
+check('summary figures stay headline-sized', Math.max(...fontSizes) >= 24, `max=${Math.max(...fontSizes)}px`)
 check('heatmap cells are enlarged',
   Math.max(...nodes.filter(node => node.type === 'rect').map(node => Number(node.props?.width ?? 0))) >= 16,
   `cell=${Math.max(...nodes.filter(node => node.type === 'rect').map(node => Number(node.props?.width ?? 0)))}px`)
