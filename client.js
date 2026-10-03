@@ -224,6 +224,12 @@ window.__ModuleLoader__.load({
     const PAGE = {
       padding: '22px 32px 46px', width: '100%', maxWidth: 1440, margin: '0 auto',
       boxSizing: 'border-box',
+      // The panel lands in ui-layout's centre column, which is a flex column with
+      // `overflow: hidden`. A percentage height collapses to `auto` against that
+      // indefinite container, so the leftover track is claimed the flex way and the
+      // report scrolls inside it — without this, a long page is silently cut off at
+      // the window edge with no scrollbar anywhere.
+      flex: '1 1 auto', minHeight: 0, overflowY: 'auto', overflowX: 'hidden',
     }
 
     const hairline = 'color-mix(in srgb, currentColor 16%, transparent)'
@@ -1036,6 +1042,31 @@ window.__ModuleLoader__.load({
           const [open, setOpen] = React.useState(false)
           const [anchor, setAnchor] = React.useState(null)
           const rootRef = React.useRef(null)
+          const panelRef = React.useRef(null)
+
+          // Close on Escape, or on a press anywhere outside the pill and its
+          // popover. The popover is tall and covers the page it describes, so a
+          // trigger-only toggle leaves the reader with no way out that does not
+          // also spend money. Capture phase, so a press on another control both
+          // closes this and reaches that control.
+          React.useEffect(() => {
+            if (!open || typeof document === 'undefined') return undefined
+            const onPointerDown = event => {
+              const target = event.target
+              if (rootRef.current?.contains(target)) return
+              if (panelRef.current?.contains(target)) return
+              setOpen(false)
+            }
+            const onKeyDown = event => {
+              if (event.key === 'Escape') setOpen(false)
+            }
+            document.addEventListener('pointerdown', onPointerDown, true)
+            document.addEventListener('keydown', onKeyDown)
+            return () => {
+              document.removeEventListener('pointerdown', onPointerDown, true)
+              document.removeEventListener('keydown', onKeyDown)
+            }
+          }, [open])
 
           // Touch the version so a ledger change re-renders this subtree.
           void version
@@ -1102,6 +1133,7 @@ window.__ModuleLoader__.load({
 
           const baselineTokens = totalOf(entry.baseline) - totalOf(entry.charged)
           const panel = h('div', {
+            ref: panelRef,
             role: 'dialog', 'aria-label': t('title'), style: {
               ...PANEL,
               ...(anchor === null ? {} : {
@@ -1884,6 +1916,36 @@ window.__ModuleLoader__.load({
           return totalOf(row.charged) + (row.unpriced ?? 0)
         }
 
+        /** A workspace's display name, or the label for conversations in none. */
+        function projectNameOf(items, workspaceId) {
+          return items.find(item => item?.workspaceId === workspaceId)?.title ?? t('reportNoProject')
+        }
+
+        /**
+         * The project scope picker both views filter by.
+         *
+         * One component because it had been drawn twice and drifted: the project
+         * view wrapped its copy in a muted label, so the same control came out grey
+         * and a size smaller there while the account view drew it plainly. The label
+         * survives as the control's accessible name rather than as visible text.
+         * @param props - `{ value, all, projects, labelOf, onChange }`.
+         */
+        function ScopePicker({ value, all, projects, labelOf, onChange }) {
+          return h('select', {
+            style: { ...SELECT, width: 'min(240px, 100%)' },
+            value,
+            'aria-label': t('reportScope'),
+            onChange: event => onChange(event.target.value),
+          },
+            h('option', { value: '', style: OPTION }, `${t('reportAllProjects')}（${all.length}）`),
+            ...projects.map(group => h('option', {
+              key: group.workspaceId || 'none',
+              value: group.workspaceId === '' ? NO_PROJECT : group.workspaceId,
+              style: OPTION,
+            }, `${labelOf(group.workspaceId)} · ${group.count}`)),
+          )
+        }
+
         /**
          * The time-window switch both views carry.
          *
@@ -2166,10 +2228,8 @@ window.__ModuleLoader__.load({
           for (const item of items) {
             for (const id of item?.sessionIds ?? EMPTY_ARRAY) ownerOf.set(id, item)
           }
-          const projectLabel = workspaceId => {
-            const item = items.find(candidate => candidate?.workspaceId === workspaceId)
-            return item?.title ?? t('reportNoProject')
-          }
+          const projectLabel = workspaceId => projectNameOf(items, workspaceId)
+
 
           // Conversations that actually happened. A baselined row that never ran
           // is noise in every chart, but a row with no *priced* figure is not the
@@ -2298,19 +2358,13 @@ window.__ModuleLoader__.load({
                 display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 14,
               },
             },
-              h('span', { style: { ...MUTED, display: 'inline-flex', alignItems: 'center', gap: 8 } },
-                t('reportScope'),
-                h('select', {
-                  style: { ...SELECT, width: 'min(300px, 100%)' },
-                  value: scope,
-                  onChange: event => { setScope(event.target.value); setPage(0) },
-                },
-                  h('option', { value: '', style: OPTION }, `${t('reportAllProjects')}（${all.length}）`),
-                  ...projects.map(group => h('option', {
-                    key: group.workspaceId || 'none', value: group.workspaceId === '' ? NO_PROJECT : group.workspaceId, style: OPTION,
-                  }, `${projectLabel(group.workspaceId)} · ${group.count}`)),
-                ),
-              ),
+              h(ScopePicker, {
+                value: scope,
+                all,
+                projects,
+                labelOf: projectLabel,
+                onChange: next => { setScope(next); setPage(0) },
+              }),
               h('span', { style: { flex: 1 } }),
               h(RangeChips, { value: range, onChange: next => { setRange(next); setPage(0) } }),
             ),
@@ -2710,8 +2764,8 @@ window.__ModuleLoader__.load({
           for (const item of items) {
             for (const id of item?.sessionIds ?? EMPTY_ARRAY) ownerOf.set(id, item)
           }
-          const projectTitle = workspaceId =>
-            items.find(item => item?.workspaceId === workspaceId)?.title ?? t('reportNoProject')
+          const projectTitle = workspaceId => projectNameOf(items, workspaceId)
+
 
           // Every conversation that carries a figure, with its day map and its
           // all-time timing counters (those are not sliceable by date).
@@ -2863,16 +2917,13 @@ window.__ModuleLoader__.load({
                 type: 'button', style: { ...BUTTON, padding: '2px 10px', fontSize: size(13) },
                 onClick: () => { setScope(''); setPage(0) },
               }, `← ${t('dashBack')}`),
-              h('select', {
-                style: { ...SELECT, width: 'min(240px, 100%)' },
+              h(ScopePicker, {
                 value: scope,
-                onChange: event => { setScope(event.target.value); setPage(0) },
-              },
-                h('option', { value: '', style: OPTION }, `${t('reportAllProjects')}（${all.length}）`),
-                ...projects.map(group => h('option', {
-                  key: group.workspaceId || 'none', value: group.workspaceId === '' ? NO_PROJECT : group.workspaceId, style: OPTION,
-                }, `${projectTitle(group.workspaceId)} · ${group.count}`)),
-              ),
+                all,
+                projects,
+                labelOf: projectTitle,
+                onChange: next => { setScope(next); setPage(0) },
+              }),
               h('span', { style: { flex: 1 } }),
               h(RangeChips, { value: range, onChange: next => { setRange(next); setPage(0) } }),
             ),

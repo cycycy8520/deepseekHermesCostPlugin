@@ -468,6 +468,38 @@ if (projectsTabButton !== undefined) {
     if (scopeSelect !== undefined) scopeSelect.props.onChange({ target: { value: '' } })
   }
 
+  /* ------------------------------------------------- the shared filter chrome */
+
+  // The same control, drawn once. It had been drawn twice and drifted: the project
+  // view wrapped its copy in a muted label, which greyed the select and shrank its
+  // type, so the two tabs disagreed about which control they were looking at.
+  const scopeSelects = tree => treeNodes(tree).filter(node => node.type === 'select'
+    && flatten(node.children).includes(zhStrings.reportAllProjects))
+  const accountScope = scopeSelects(accountTree)[0]
+  const projectsScope = scopeSelects(projectsTree)[0]
+  check('both views draw the scope picker identically',
+    accountScope !== undefined && projectsScope !== undefined
+      && String(accountScope.props.style.width) === String(projectsScope.props.style.width)
+      && String(accountScope.props.style.colorScheme) === String(projectsScope.props.style.colorScheme)
+      // `inherit` is what the shared input style sets; the project view used to
+      // hand it the muted text colour by wrapping it in a muted label.
+      && String(accountScope.props.style.color) === 'inherit'
+      && String(projectsScope.props.style.color) === 'inherit',
+    `width=${projectsScope?.props.style.width} color=${String(projectsScope?.props.style.color)}`)
+  check('the scope label is a name, not a grey prefix',
+    projectsScope?.props['aria-label'] === zhStrings.reportScope,
+    `aria-label=${String(projectsScope?.props['aria-label'])}`)
+
+  // The panel lives in a flex column with `overflow: hidden`, so it has to scroll
+  // itself; a percentage height there collapses to auto and the page is clipped.
+  const pageStyle = node => treeNodes(node).find(entry => entry.props?.style?.maxWidth === 1440)
+    ?.props.style
+  const accountPage = pageStyle(accountTree)
+  check('the panel scrolls instead of clipping its tail',
+    accountPage?.overflowY === 'auto' && accountPage?.flex === '1 1 auto'
+      && accountPage?.minHeight === 0,
+    `overflowY=${String(accountPage?.overflowY)} flex=${String(accountPage?.flex)} minHeight=${String(accountPage?.minHeight)}`)
+
   // The project dimension must be a list you can act on: the ranking rows carry
   // the same drill-down the account view's bars do, and the donut's legend rows
   // are targets too — a chart you cannot click is a picture, not a report.
@@ -581,6 +613,45 @@ try {
   pillError = caught
 }
 check('composer pill renders without throwing', pillError === null, pillError === null ? pillText.slice(0, 60) : String(pillError))
+
+/* ------------------------------------------- the popover closes from the outside */
+
+// The dialog is tall and covers the page it describes, so it must close from
+// outside itself as well as from its trigger. A listener registry stands in for
+// the DOM here: what is asserted is that an open popover listens, and that the
+// press it hears closes it.
+const listeners = new Map()
+const savedDocument = globalThis.document
+globalThis.document = {
+  addEventListener: (type, handler) => listeners.set(type, handler),
+  removeEventListener: type => listeners.delete(type),
+}
+try {
+  const pillProps = { ...shellProps, sessionId: 'session-a' }
+  const triggerOf = tree => treeNodes(tree).find(node => node.type === 'button'
+    && node.props?.['aria-haspopup'] === 'dialog')
+  let pillTree = renderSurface(React.createElement(pillEntry.component, pillProps))
+  check('the pill has a dialog trigger', triggerOf(pillTree) !== undefined)
+  triggerOf(pillTree)?.props.onClick()
+  pillTree = renderSurface(React.createElement(pillEntry.component, pillProps), true)
+  check('the open popover is on screen', triggerOf(pillTree)?.props['aria-expanded'] === true)
+  check('an open popover listens for an outside press', listeners.has('pointerdown'),
+    [...listeners.keys()].join(',') || 'no listeners')
+
+  listeners.get('pointerdown')?.({ target: {} })
+  pillTree = renderSurface(React.createElement(pillEntry.component, pillProps), true)
+  check('a press outside closes the popover', triggerOf(pillTree)?.props['aria-expanded'] === false,
+    `aria-expanded=${String(triggerOf(pillTree)?.props['aria-expanded'])}`)
+
+  triggerOf(pillTree)?.props.onClick()
+  pillTree = renderSurface(React.createElement(pillEntry.component, pillProps), true)
+  listeners.get('keydown')?.({ key: 'Escape' })
+  pillTree = renderSurface(React.createElement(pillEntry.component, pillProps), true)
+  check('Escape closes the popover', triggerOf(pillTree)?.props['aria-expanded'] === false)
+} finally {
+  if (savedDocument === undefined) delete globalThis.document
+  else globalThis.document = savedDocument
+}
 
 /* ------------------------------------------------- sizing follows the harness */
 
