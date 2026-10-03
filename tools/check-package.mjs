@@ -96,6 +96,15 @@ if (manifest.engines?.dsh === undefined) {
 
 // -------------------------------------------------------------------- report
 
+// The panel reports the Host's version so "which build am I running" is
+// answerable, which only works while the constant and the manifest agree.
+const hostSource = readFileSync(new URL('../index.js', import.meta.url), 'utf8')
+const declared = /export const PLUGIN_VERSION = '([^']+)'/.exec(hostSource)?.[1]
+if (declared === undefined) problems.push('index.js does not declare PLUGIN_VERSION')
+else if (declared !== version) {
+  problems.push(`PLUGIN_VERSION (${declared}) does not match package.json (${String(version)})`)
+}
+
 console.log(`package : ${String(name)}@${String(version)}`)
 console.log(`patch   : ${String(dsh?.bundle?.patch ?? '(none)')}`)
 console.log(`client  : ${String(dsh?.client?.platform ?? '(none)')}`)

@@ -185,6 +185,29 @@ stateDocument = {
       model: 'deepseek-flash',
       updatedAt: 3,
     },
+    // A session whose wall time exists only in this plugin's own record: the host
+    // carried no `sessionStats` for it. Without the ledger fallback its seven
+    // hours of model time vanished from the panel's totals.
+    'session-timed': {
+      baseline: { cacheRead: 0, cacheMiss: 0, cacheWrite: 0, output: 0 },
+      byBucket: { cacheRead: 0, cacheMiss: 0, cacheWrite: 0, output: 0 },
+      charged: { cacheRead: 0, cacheMiss: 1000, cacheWrite: 0, output: 500 },
+      byDay: {
+        [TODAY]: {
+          tokens: 1500,
+          cost: 0.5,
+          credits: 0,
+          byBucket: { cacheRead: 0, cacheMiss: 1000, cacheWrite: 0, output: 500 },
+        },
+      },
+      cost: 0.5,
+      credits: 0,
+      unpriced: 0,
+      llmMs: 7 * 3600000,
+      toolMs: 0,
+      model: 'deepseek-flash',
+      updatedAt: 4,
+    },
   },
 }
 
@@ -352,10 +375,11 @@ check('both view tabs render',
 check('account spend is the default view',
   accountText.includes(zhStrings.dashActivity) && !accountText.includes(zhStrings.reportByModel),
   accountText.slice(0, 90))
-// 1.00 seeded on an old day + 0.132 priced live, so "all time" and "last 7 days"
-// are different numbers and a view that ignores the window is caught.
-const ALL_TIME_TOTAL = /¥1\.13/
-const WEEK_TOTAL = /¥0\.13/
+// 1.00 seeded on an old day + 0.132 priced live + 0.50 seeded today, so "all time"
+// and "last 7 days" are different numbers and a view that ignores the window is
+// caught.
+const ALL_TIME_TOTAL = /¥1\.63/
+const WEEK_TOTAL = /¥0\.63/
 check('the account view totals all time by default', ALL_TIME_TOTAL.test(accountText), accountText.slice(0, 100))
 
 // A conversation whose route had no price entry, and one the plugin only ever
@@ -368,6 +392,13 @@ check('unpriced usage stays in the view',
     : 'dropped')
 check('a baselined session still contributes its duration',
   accountText.includes('2小时0分'),
+  accountText.match(/\d+小时[\d分秒]*/g)?.join(' ') ?? 'no duration rendered')
+
+// The host's `sessionStats` is preferred when present, but it is not always
+// carried: the wall time this plugin folded out of the log is the fallback, and
+// without it a session with seven recorded hours contributed nothing.
+check('recorded wall time survives a missing host projection',
+  accountText.includes('7小时0分'),
   accountText.match(/\d+小时[\d分秒]*/g)?.join(' ') ?? 'no duration rendered')
 
 /** Press the button whose label matches, as a user would. */

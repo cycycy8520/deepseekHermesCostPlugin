@@ -377,6 +377,7 @@ window.__ModuleLoader__.load({
       dashSpan: '工作跨度 {span} 天：{from} → {to}（活跃 {days} 天）',
       dashByProject: '项目排行',
       dashUndated: '{count} 个对话缺少按天数据，未计入所选时间段',
+      dashUntimed: '{count} 个对话没有用时数据 · 在「花费计价」重跑一次计算即可补齐',
       dashNeedBackfill: '{count} 个对话缺少按天数据 · 在「花费计价」重跑一次计算即可补齐',
       colDuration: '用时',
       conversations: '{count} 个对话',
@@ -508,6 +509,7 @@ window.__ModuleLoader__.load({
       dashSpan: 'Worked over {span} days: {from} → {to} ({days} active)',
       dashByProject: 'By project',
       dashUndated: '{count} conversations have no per-day data and are outside the selected range',
+      dashUntimed: '{count} conversations have no duration data - rerun a compute in Cost to fill them in',
       dashNeedBackfill: '{count} conversations have no per-day data - rerun a compute in Cost to fill them in',
       colDuration: 'Time',
       conversations: '{count} conversations',
@@ -635,6 +637,8 @@ window.__ModuleLoader__.load({
         /** sessionId -> accumulated row. Authoritative in this browser tab. */
         const ledger = new Map()
         let revision = 0
+        /** The Host half's version, shown so 'which build am I running' is answerable. */
+        let hostVersion = ''
         let loaded = false
         let version = 0
         let writeTimer = null
@@ -688,6 +692,8 @@ window.__ModuleLoader__.load({
               cost: Number.isFinite(row.cost) ? row.cost : 0,
               credits: Number.isFinite(row.credits) ? row.credits : 0,
               unpriced: Number.isFinite(row.unpriced) ? row.unpriced : 0,
+              llmMs: Number.isFinite(row.llmMs) ? row.llmMs : undefined,
+              toolMs: Number.isFinite(row.toolMs) ? row.toolMs : undefined,
               model: typeof row.model === 'string' ? row.model : '',
               updatedAt: Number.isFinite(row.updatedAt) ? row.updatedAt : 0,
             })
@@ -730,6 +736,7 @@ window.__ModuleLoader__.load({
             readiness = 'ready'
             readinessDetail = ''
             revision = Number.isFinite(payload.revision) ? payload.revision : 0
+            hostVersion = typeof payload.pluginVersion === 'string' ? payload.pluginVersion : ''
             // The settings page edits `view.value` and re-reads it after a save,
             // so the stored document is presented in the shape it already knows.
             view = { ns: NS, value: payload.config, user: payload.config, revision, writable: true }
@@ -1307,9 +1314,11 @@ window.__ModuleLoader__.load({
          * The baseline moves to the session's totals as of the log's end, so
          * live accumulation continues from the backfilled figure instead of
          * re-charging history, and the dialog's "before install" note falls to
-         * zero on its own.
+         * zero on its own. `timing` is the wall times the Host folded out of the
+         * same log, recorded here so the panel's duration figures survive a host
+         * that does not project `sessionStats` for this session.
          */
-        function applyBackfill(sessionId, priced, totals) {
+        function applyBackfill(sessionId, priced, totals, timing) {
           ledger.set(sessionId, {
             baseline: totals ?? { ...zeroBuckets() },
             byBucket: priced.byBucket,
@@ -1318,6 +1327,8 @@ window.__ModuleLoader__.load({
             cost: priced.cost,
             credits: priced.credits,
             unpriced: priced.unpriced,
+            llmMs: timing?.llmMs,
+            toolMs: timing?.toolMs,
             model: priced.model,
             updatedAt: Date.now(),
           })
@@ -1366,7 +1377,7 @@ window.__ModuleLoader__.load({
             } else if (frame.type === 'session') {
               const priced = priceSamples(frame.samples ?? [])
               const totals = currentTotals(frame.sessionId)
-              applyBackfill(frame.sessionId, priced, totals)
+              applyBackfill(frame.sessionId, priced, totals, frame.timing)
               cost += priced.cost
               credits += priced.credits
               done += 1
@@ -1672,7 +1683,8 @@ window.__ModuleLoader__.load({
               h('div', { style: { ...FAINTED, marginBottom: 10, ...(backfillReady === false ? WARN : {}) } },
                 backfillReady === undefined
                   ? '…'
-                  : (backfillReady ? t('backfillReady') : t('backfillUnavailable'))),
+                  : (backfillReady ? t('backfillReady') : t('backfillUnavailable'))
+                  + (hostVersion === '' ? '' : ` · dsh-cost-meter v${hostVersion}`)),
 
               h('div', { style: { display: 'flex', gap: 18, flexWrap: 'wrap', marginBottom: 10 } },
                 scopeOption('all', t('scopeAll', { count: allIds.length })),
@@ -1914,6 +1926,23 @@ window.__ModuleLoader__.load({
          */
         function tokensOf(row) {
           return totalOf(row.charged) + (row.unpriced ?? 0)
+        }
+
+        /**
+         * A row's measured duration, and where it came from.
+         *
+         * The session projection is the host's own answer and is preferred. The
+         * wall times the backfill folded out of the same log are the fallback, for
+         * the sessions the host does not project: without it, a machine whose
+         * projection cache was cold reported one hour of tool time where its logs
+         * hold dozens — with every other figure on the page correct.
+         */
+        function timingOf(stats, row) {
+          if (stats !== undefined) return stats
+          if (Number.isFinite(row?.llmMs) || Number.isFinite(row?.toolMs)) {
+            return { llmMs: row.llmMs ?? 0, toolMs: row.toolMs ?? 0 }
+          }
+          return undefined
         }
 
         /** A workspace's display name, or the label for conversations in none. */
@@ -2243,7 +2272,8 @@ window.__ModuleLoader__.load({
             // "spend" means while a date filter is on.
             const windowed = sumRange(row, cutoff)
             const stats = byId[id]?.projectionValues?.sessionStats
-            if (!hasUsage(windowed) && stats === undefined) continue
+            const timing = timingOf(stats, row)
+            if (!hasUsage(windowed) && timing === undefined) continue
             // The timing counters ride along so the shared detail table can show
             // its duration column on this view too; they are not sliceable by
             // date, which is why they stay all-time figures.
@@ -2255,9 +2285,9 @@ window.__ModuleLoader__.load({
               credits: windowed.credits,
               tokens: windowed.tokens,
               byBucket: windowed.byBucket,
-              hasStats: stats !== undefined,
-              llmMs: stats?.llmMs ?? 0,
-              toolMs: stats?.toolMs ?? 0,
+              hasStats: timing !== undefined,
+              llmMs: timing?.llmMs ?? 0,
+              toolMs: timing?.toolMs ?? 0,
               models: typeof row.model === 'string' && row.model.length > 0
                 ? row.model.split(', ')
                 : [],
@@ -2772,10 +2802,11 @@ window.__ModuleLoader__.load({
           const all = []
           for (const [id, row] of ledger) {
             const stats = statsOf(id)
+            const timing = timingOf(stats, row)
             const figures = { cost: row.cost, credits: row.credits, tokens: tokensOf(row) }
             // Zero usage AND no session stats means the plugin merely baselined a
             // conversation that never ran here; anything else is a real row.
-            if (!hasUsage(figures) && stats === undefined) continue
+            if (!hasUsage(figures) && timing === undefined) continue
             all.push({
               id,
               workspaceId: ownerOf.get(id)?.workspaceId ?? '',
@@ -2787,13 +2818,13 @@ window.__ModuleLoader__.load({
               byBucket: row.byBucket,
               byDay: row.byDay ?? {},
               updatedAt: row.updatedAt,
-              // Absent stats are not zero time; the table must say so.
-              hasStats: stats !== undefined,
+              // Absent timing is not zero time; the table must say so.
+              hasStats: timing !== undefined,
               models: typeof row.model === 'string' && row.model.length > 0
                 ? row.model.split(', ')
                 : [],
-              llmMs: stats?.llmMs ?? 0,
-              toolMs: stats?.toolMs ?? 0,
+              llmMs: timing?.llmMs ?? 0,
+              toolMs: timing?.toolMs ?? 0,
               ttftMs: stats?.ttftMs ?? 0,
               ttftSteps: stats?.ttftSteps ?? 0,
               decodeMs: stats?.decodeMs ?? 0,
@@ -2801,6 +2832,9 @@ window.__ModuleLoader__.load({
             })
           }
           const scoped = scope === '' ? all : all.filter(row => row.workspaceId === (scope === NO_PROJECT ? '' : scope))
+          // A duration figure that silently omits conversations is worse than one
+          // that says how many it could not measure.
+          const untimed = scoped.filter(row => row.hasStats !== true).length
 
           // Date filter. Only the per-day map can be sliced, so timing and
           // conversation counts fall back to all-time and say so.
@@ -2950,6 +2984,9 @@ window.__ModuleLoader__.load({
                 },
               ],
             }),
+            untimed > 0 && h('div', { style: { ...FAINTED, marginBottom: 12 } },
+              t('dashUntimed', { count: untimed })),
+
             // ---- activity heatmap (rule 6: adaptive span, never a fixed year)
             h(ActivityPanel, { dayTotals, money, note: heatNote }),
 

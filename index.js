@@ -232,6 +232,10 @@ function normalizeLedgerRow(raw) {
     cost: isNonNegative(raw.cost) ? raw.cost : 0,
     credits: isNonNegative(raw.credits) ? raw.credits : 0,
     unpriced: isNonNegative(raw.unpriced) ? raw.unpriced : 0,
+    // Wall times, as this plugin's own log fold measured them. Absent means "not
+    // measured yet", which is not the same as zero, so `undefined` is preserved.
+    llmMs: isNonNegative(raw.llmMs) ? raw.llmMs : undefined,
+    toolMs: isNonNegative(raw.toolMs) ? raw.toolMs : undefined,
     model: typeof raw.model === 'string' ? raw.model : '',
     updatedAt: isNonNegative(raw.updatedAt) ? raw.updatedAt : 0,
   }
@@ -305,6 +309,13 @@ export function resolveConfig(raw) {
  * with. Bump it when the shape changes and migrate in {@link adoptDocument}.
  */
 export const SCHEMA_TAG = 'dsh-cost-state/v1'
+
+/**
+ * This build's version, reported to the panel so 'which code is loaded' is
+ * answerable without reading files. Kept equal to package.json by
+ * 	ools/check-package.mjs, because a version that drifts is worse than none.
+ */
+export const PLUGIN_VERSION = '1.3.0'
 
 /** Harness home, without asking the framework for it (env first, then `~/.dsh`). */
 function harnessHome() {
@@ -546,6 +557,76 @@ function foldSamples(events) {
 }
 
 /**
+ * Fold a session log into the wall times this panel reports.
+ *
+ * The same algorithm as DSH's own `sessionStats` projection
+ * (`@deepseek-ai/dsh-session-stats`), for the two figures the panel renders:
+ *
+ *   - model time: `step/start` → `assistant/message`, per step
+ *   - tool time:  `tool/call` → `tool/result`, paired by `callId`
+ *
+ * That projection is the host's own answer and the panel prefers it. This fold
+ * exists because the projection is not always carried for every session in the
+ * session-list snapshot: while it is missing, a session that ran for an hour
+ * contributes nothing, and the panel's totals collapse with no visible reason
+ * (they fell from 47h to 1h on one machine with every other figure correct).
+ * Recording the fold in the ledger makes these figures a property of the stored
+ * record instead of a property of whichever projections happen to be loaded.
+ *
+ * @param events - one session's events, in log order.
+ * @returns `{ llmMs, toolMs, turns, steps }`; times are 0 when the log has none.
+ */
+export function foldTiming(events) {
+  let llmMs = 0
+  let toolMs = 0
+  let turns = 0
+  let steps = 0
+  let lastTurn = null
+  let openStep = null
+  const pendingCalls = new Map()
+  for (const event of Array.isArray(events) ? events : []) {
+    const type = event?.type
+    const at = Number.isFinite(event?.time) ? event.time : undefined
+    if (type === 'step/start') {
+      if (at !== undefined) {
+        openStep = { turn: event.data?.turn, step: event.data?.step, startTime: at }
+      }
+      continue
+    }
+    if (type === 'assistant/message') {
+      if (openStep === null || at === undefined) continue
+      if (openStep.turn !== event.data?.turn || openStep.step !== event.data?.step) continue
+      llmMs += Math.max(0, at - openStep.startTime)
+      openStep = null
+      continue
+    }
+    if (type === 'tool/call') {
+      const callId = event.data?.callId
+      if (typeof callId === 'string' && at !== undefined) pendingCalls.set(callId, at)
+      continue
+    }
+    if (type === 'tool/result') {
+      const callId = event.data?.message?.source?.callId
+      if (typeof callId !== 'string' || at === undefined) continue
+      const dispatched = pendingCalls.get(callId)
+      if (dispatched === undefined) continue
+      toolMs += Math.max(0, at - dispatched)
+      pendingCalls.delete(callId)
+      continue
+    }
+    if (type === 'step/end') {
+      if (lastTurn !== event.data?.turn) turns += 1
+      steps += 1
+      lastTurn = event.data?.turn
+      openStep = null
+      continue
+    }
+    if (type === 'turn/end') pendingCalls.clear()
+  }
+  return { llmMs, toolMs, turns, steps }
+}
+
+/**
  * Register the document routes, then the backfill route.
  *
  * `connection` is read through a scoped inject because it activates
@@ -602,6 +683,7 @@ export function apply(ctx) {
           return json({
             ok: true,
             version: 1,
+            pluginVersion: PLUGIN_VERSION,
             revision: document.revision,
             config: document.config,
             ledger: document.ledger,
@@ -670,7 +752,7 @@ export function apply(ctx) {
             for (const sessionId of sessions) {
               try {
                 const snapshot = await scoped.sessionQuery.readSession(sessionId)
-                send({ type: 'session', sessionId, samples: foldSamples(snapshot.events) })
+                send({ type: 'session', sessionId, samples: foldSamples(snapshot.events), timing: foldTiming(snapshot.events) })
               } catch (error) {
                 send({ type: 'error', sessionId, reason: String(error).slice(0, 200) })
               }
