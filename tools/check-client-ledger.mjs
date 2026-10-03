@@ -287,6 +287,34 @@ try {
 }
 check('composer pill renders without throwing', pillError === null, pillError === null ? pillText.slice(0, 60) : String(pillError))
 
+/* ------------------------------------------------- sizing follows the harness */
+
+// The theme publishes the reader's content size; a surface that hard-codes its
+// own pixels stays at one size while every native panel follows the setting, and
+// a centered fixed page width leaves most of a wide window empty. Both were true
+// of every surface here, so both are pinned now.
+const surfaces = [
+  ['main[cost]', renderSurface(React.createElement(
+    registrations.find(item => item.spec?.name === 'main' && item.spec?.key === 'cost').component, shellProps))],
+  ['main[cost-projects]', renderSurface(React.createElement(
+    registrations.find(item => item.spec?.name === 'main' && item.spec?.key === 'cost-projects').component, shellProps))],
+  ['settings.section[cost]', renderSurface(React.createElement(settingsEntry.component, shellProps))],
+]
+const markup = surfaces.map(([, tree]) => JSON.stringify(tree)).join('\n')
+
+check('text sizes derive from the theme content size',
+  markup.includes('--dsh-content-font-delta'),
+  `${(markup.match(/--dsh-content-font-delta/g) ?? []).length} references`)
+check('no hard-coded font-size survives',
+  !/fontSize":\d/.test(markup) && !/font-size:\s*\d/.test(markup),
+  (markup.match(/fontSize":\d[^,]*/g) ?? []).slice(0, 2).join(' | '))
+check('pages fill the column instead of a fixed cap',
+  !markup.includes('1180') && markup.includes('"width":"100%"'),
+  markup.includes('1180') ? 'still capped at 1180px' : 'fluid')
+check('price table stretches with a readable floor',
+  markup.includes('TABLE_MIN_WIDTH') === false && markup.includes('820'),
+  markup.includes('820') ? 'min-width 820px + percentage columns' : 'no floor found')
+
 const failed = results.filter(ok => ok !== true).length
 console.log(`\n${results.length - failed}/${results.length} checks passed`)
 if (failed > 0) process.exit(1)

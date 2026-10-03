@@ -201,6 +201,26 @@ window.__ModuleLoader__.load({
 
     // ------------------------------------------------------------------ style
 
+    /**
+     * Sizing follows the harness, not this file.
+     *
+     * The theme publishes the reader's content size as `--dsh-content-font-size`
+     * (12–17px, default 14) plus `--dsh-content-font-delta`, its distance from
+     * that default, and every native surface derives its own sizes from them.
+     * Hard-coded pixels would pin this meter at one size while the rest of the
+     * app tracks the setting, so each size below is the number the design was
+     * drawn at PLUS that same delta: `size(11)` is 11px at the default and stays
+     * proportionate at any other.
+     */
+    const size = px => `calc(${px}px + var(--dsh-content-font-delta, 0px))`
+    /**
+     * The page fills the column the harness gives it.
+     *
+     * A centered `max-width` reads as a fixed-resolution panel on a wide window
+     * and leaves most of it empty; the gutter is the only width this file owns.
+     */
+    const PAGE = { padding: '18px 24px 40px', width: '100%', boxSizing: 'border-box' }
+
     const hairline = 'color-mix(in srgb, currentColor 16%, transparent)'
     const SOFT = 'color-mix(in srgb, currentColor 55%, transparent)'
     const FAINT = 'color-mix(in srgb, currentColor 38%, transparent)'
@@ -208,21 +228,21 @@ window.__ModuleLoader__.load({
       display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 9px',
       border: `1px solid ${hairline}`, borderRadius: 999,
       background: 'color-mix(in srgb, currentColor 7%, transparent)',
-      color: 'inherit', font: 'inherit', fontSize: 12, lineHeight: 1.5, cursor: 'pointer',
+      color: 'inherit', font: 'inherit', fontSize: size(12), lineHeight: 1.5, cursor: 'pointer',
     }
     const PANEL = {
-      position: 'fixed', zIndex: 60, width: 340, padding: 12,
+      position: 'fixed', zIndex: 60, width: 'min(340px, calc(100vw - 32px))', padding: 12,
       border: `1px solid ${hairline}`, borderRadius: 12,
       background: 'color-mix(in srgb, Canvas 92%, CanvasText)',
-      color: 'CanvasText', font: 'inherit', fontSize: 12, lineHeight: 1.6,
+      color: 'CanvasText', font: 'inherit', fontSize: size(12), lineHeight: 1.6,
       boxShadow: '0 10px 30px rgba(0,0,0,.30)',
     }
     const ROW = { display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'baseline' }
-    const MUTED = { color: SOFT, fontSize: 11 }
-    const FAINTED = { color: FAINT, fontSize: 10.5 }
+    const MUTED = { color: SOFT, fontSize: size(11) }
+    const FAINTED = { color: FAINT, fontSize: size(10.5) }
     const RULE = { height: 1, background: hairline, margin: '8px 0' }
     const WARN = { color: '#d29343' }
-    const SECTION_TITLE = { fontSize: 13, fontWeight: 600, margin: '0 0 8px' }
+    const SECTION_TITLE = { fontSize: size(13), fontWeight: 600, margin: '0 0 8px' }
     const GROUP = {
       border: `1px solid ${hairline}`, borderRadius: 10, padding: 12, marginBottom: 14,
     }
@@ -230,11 +250,11 @@ window.__ModuleLoader__.load({
       width: '100%', boxSizing: 'border-box', padding: '3px 6px',
       border: `1px solid ${hairline}`, borderRadius: 6,
       background: 'color-mix(in srgb, currentColor 5%, transparent)',
-      color: 'inherit', font: 'inherit', fontSize: 11.5,
+      color: 'inherit', font: 'inherit', fontSize: size(11.5),
     }
     const TH = {
       textAlign: 'left', padding: '2px 5px', fontWeight: 500, color: SOFT,
-      fontSize: 10.5, whiteSpace: 'nowrap',
+      fontSize: size(10.5), whiteSpace: 'nowrap',
     }
     // A native select popup is drawn by the OS, not the page: it inherits none
     // of the page's colours and renders light regardless of the app theme,
@@ -252,7 +272,7 @@ window.__ModuleLoader__.load({
     const BUTTON = {
       padding: '4px 12px', border: `1px solid ${hairline}`, borderRadius: 8,
       background: 'color-mix(in srgb, currentColor 8%, transparent)',
-      color: 'inherit', font: 'inherit', fontSize: 12, cursor: 'pointer',
+      color: 'inherit', font: 'inherit', fontSize: size(12), cursor: 'pointer',
     }
     const COLUMNS = ['match', 'from', 'to', 'cacheHit', 'cacheMiss', 'cacheWrite', 'output', 'currency']
     /**
@@ -266,9 +286,15 @@ window.__ModuleLoader__.load({
     const TOP_ROWS = 20
     /** Checkbox rows the session picker renders before it asks for a search. */
     const PICK_ROWS = 50
-    /** Fixed column widths, so a value never squeezes its own header into a sliver. */
-    const WIDTHS = [168, 140, 140, 68, 74, 64, 64, 54, 40, 30]
-    const TABLE_WIDTH = WIDTHS.reduce((sum, width) => sum + width, 0)
+    /**
+     * Column weights, not pixels.
+     *
+     * The price table stretches with the window; the wrapper scrolls only once
+     * the columns would be narrower than their own inputs.
+     */
+    const WIDTHS = ['20%', '16.6%', '16.6%', '8%', '8.8%', '7.6%', '7.6%', '6.4%', '4.8%', '3.6%']
+    /** Below this the settings table scrolls instead of squeezing its inputs. */
+    const TABLE_MIN_WIDTH = 820
 
     // ----------------------------------------------------------------- locale
 
@@ -949,7 +975,7 @@ window.__ModuleLoader__.load({
             }, notReadyTitle()),
             h('div', { style: { ...FAINTED, marginTop: 8, lineHeight: 1.75 } }, notReadyHint()),
             readinessDetail === '' ? null
-              : h('div', { style: { ...FAINTED, marginTop: 6, fontFamily: 'ui-monospace, monospace', fontSize: 11 } },
+              : h('div', { style: { ...FAINTED, marginTop: 6, fontFamily: 'ui-monospace, monospace', fontSize: size(11) } },
                 readinessDetail),
             h('button', {
               type: 'button', style: { ...PILL, marginTop: 14 }, onClick: retry,
@@ -1134,7 +1160,7 @@ window.__ModuleLoader__.load({
             },
               h('span', { style: { fontWeight: 700, opacity: 0.85 } }, symbol.trim() || 'cr'),
               h('span', null, label.slice((symbol.trim() || 'cr').length)),
-              entry.unpriced > 0 && h('span', { style: { ...WARN, fontSize: 10 } }, '•'),
+              entry.unpriced > 0 && h('span', { style: { ...WARN, fontSize: size(10) } }, '•'),
             ),
             open && (ReactDOM?.createPortal !== undefined
               ? ReactDOM.createPortal(panel, document.body)
@@ -1508,7 +1534,7 @@ window.__ModuleLoader__.load({
 
             h('div', { style: GROUP },
               h('div', { style: { overflowX: 'auto' } },
-                h('table', { style: { width: TABLE_WIDTH, tableLayout: 'fixed', borderCollapse: 'collapse' } },
+                h('table', { style: { width: '100%', minWidth: TABLE_MIN_WIDTH, tableLayout: 'fixed', borderCollapse: 'collapse' } },
                   h('colgroup', null, ...WIDTHS.map((width, at) => h('col', { key: String(at), style: { width } }))),
                   h('thead', null, h('tr', null,
                     ...COLUMNS.map(key => h('th', { key, style: TH }, t(`col${key[0].toUpperCase()}${key.slice(1)}`))),
@@ -1534,7 +1560,7 @@ window.__ModuleLoader__.load({
                         width: 22, height: 22, padding: 0, lineHeight: 1,
                         border: `1px solid ${hairline}`, borderRadius: 6,
                         background: 'transparent', color: SOFT,
-                        font: 'inherit', fontSize: 14, cursor: 'pointer',
+                        font: 'inherit', fontSize: size(14), cursor: 'pointer',
                       },
                       onClick: () => {
                         setDraft(current => ({
@@ -1603,7 +1629,7 @@ window.__ModuleLoader__.load({
               ),
 
               scope === 'project' && h('select', {
-                style: { ...SELECT, width: 380, marginBottom: 8 },
+                style: { ...SELECT, width: 'min(380px, 100%)', marginBottom: 8 },
                 value: projectCwd,
                 onChange: event => setProjectCwd(event.target.value),
               },
@@ -1615,7 +1641,7 @@ window.__ModuleLoader__.load({
 
               scope === 'picked' && h('div', { style: { marginBottom: 8 } },
                 h('input', {
-                  style: { ...INPUT, width: 380, marginBottom: 6 },
+                  style: { ...INPUT, width: 'min(380px, 100%)', marginBottom: 6 },
                   placeholder: t('pickSearch'),
                   value: pickQuery,
                   onChange: event => setPickQuery(event.target.value),
@@ -1846,7 +1872,7 @@ window.__ModuleLoader__.load({
 
           const share = value => (totalCost > 0 ? `${(value / totalCost * 100).toFixed(1)}%` : '—')
           const stat = (value, label) => h('div', { key: label, style: { minWidth: 110 } },
-            h('div', { style: { fontSize: 18, fontWeight: 600 } }, value),
+            h('div', { style: { fontSize: size(18), fontWeight: 600 } }, value),
             h('div', { style: FAINTED }, label),
           )
           const cell = (content, extra) => h('td', {
@@ -1860,7 +1886,7 @@ window.__ModuleLoader__.load({
               h('div', { style: { ...MUTED, marginBottom: 10, display: 'flex', alignItems: 'center', gap: 8 } },
                 t('reportScope'),
                 h('select', {
-                  style: { ...SELECT, width: 300 },
+                  style: { ...SELECT, width: 'min(300px, 100%)' },
                   value: scope,
                   onChange: event => { setScope(event.target.value); setPage(0) },
                 },
@@ -1984,7 +2010,7 @@ window.__ModuleLoader__.load({
 
           // This is a main panel now, so it already owns the full column; the
           // former settings-section fullscreen escape hatch is gone with it.
-          return h('div', { style: { padding: '18px 24px 40px', maxWidth: 1180, margin: '0 auto' } },
+          return h('div', { style: PAGE },
             h('h3', { style: { ...SECTION_TITLE, margin: '0 0 4px' } }, t('reportTitle')),
             h('div', { style: { ...MUTED, marginBottom: 14, maxWidth: 720 } }, t('reportIntro')),
             body,
@@ -2359,7 +2385,7 @@ window.__ModuleLoader__.load({
 
           const shareOf = value => (totalCost > 0 ? `${(value / totalCost * 100).toFixed(1)}%` : '—')
           const card = (value, label, note) => h('div', { key: label, style: { minWidth: 150 } },
-            h('div', { style: { fontSize: 28, fontWeight: 600, lineHeight: 1.25 } }, value),
+            h('div', { style: { fontSize: size(28), fontWeight: 600, lineHeight: 1.25 } }, value),
             h('div', { style: FAINTED }, label),
             note !== undefined && h('div', { style: { ...FAINTED, marginTop: 2 } }, note),
           )
@@ -2367,7 +2393,7 @@ window.__ModuleLoader__.load({
           const empty = all.length === 0
           if (empty) {
             return h('div', { style: { maxWidth: 640, margin: '80px auto', textAlign: 'center' } },
-              h('div', { style: { fontSize: 15, fontWeight: 600, marginBottom: 8 } }, t('dashEmpty')),
+              h('div', { style: { fontSize: size(15), fontWeight: 600, marginBottom: 8 } }, t('dashEmpty')),
               h('div', { style: MUTED }, t('dashEmptyHint')),
             )
           }
@@ -2375,13 +2401,13 @@ window.__ModuleLoader__.load({
           const chip = (active, label, onClick) => h('button', {
             key: label, type: 'button', onClick,
             style: {
-              ...BUTTON, padding: '3px 10px', fontSize: 11.5,
+              ...BUTTON, padding: '3px 10px', fontSize: size(11.5),
               background: active ? 'color-mix(in srgb, currentColor 16%, transparent)' : 'transparent',
               fontWeight: active ? 600 : 400,
             },
           }, label)
 
-          return h('div', { style: { padding: '18px 24px 40px', maxWidth: 1180, margin: '0 auto' } },
+          return h('div', { style: PAGE },
             // ---- sticky filters
             h('div', {
               style: {
@@ -2391,14 +2417,14 @@ window.__ModuleLoader__.load({
               },
             },
               h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' } },
-                h('span', { style: { fontSize: 15, fontWeight: 600 } }, t('dashTitle')),
+                h('span', { style: { fontSize: size(15), fontWeight: 600 } }, t('dashTitle')),
                 scope !== '' && h('button', {
-                  type: 'button', style: { ...BUTTON, padding: '2px 10px', fontSize: 11.5 },
+                  type: 'button', style: { ...BUTTON, padding: '2px 10px', fontSize: size(11.5) },
                   onClick: () => { setScope(''); setPage(0) },
                 }, `← ${t('dashBack')}`),
                 h('span', { style: { flex: 1 } }),
                 h('select', {
-                  style: { ...SELECT, width: 240 },
+                  style: { ...SELECT, width: 'min(240px, 100%)' },
                   value: scope,
                   onChange: event => { setScope(event.target.value); setPage(0) },
                 },
@@ -2465,7 +2491,7 @@ window.__ModuleLoader__.load({
                   position: 'fixed', zIndex: 1100, pointerEvents: 'none',
                   left: Math.min(hover.x + 12, window.innerWidth - 220),
                   top: Math.max(hover.y - 44, 8),
-                  padding: '5px 9px', borderRadius: 8, fontSize: 11.5,
+                  padding: '5px 9px', borderRadius: 8, fontSize: size(11.5),
                   border: `1px solid ${hairline}`,
                   background: 'color-mix(in srgb, Canvas 92%, CanvasText)',
                   color: 'CanvasText', boxShadow: '0 6px 18px rgba(0,0,0,.3)',
