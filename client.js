@@ -390,6 +390,13 @@ window.__ModuleLoader__.load({
       backfillNoTarget: '请先选择要计算的会话',
       backfillReady: '回溯服务已就绪',
       backfillUnavailable: '回溯服务未就绪：host 路由未注册（改过 host 代码后需要重启 harness）',
+      notReadyLoading: '插件正在加载…',
+      notReadyMissing: '插件未就绪：host 半边没有加载',
+      notReadyMissingHint: 'settings 里没有 dsh-cost 命名空间，说明 host 半边没跑起来。装完插件后需要**重启一次 DeepSeek Harness**，只刷新页面不够。',
+      notReadyError: '插件未就绪：读不到配置',
+      notReadyErrorHint: '与 host 的 settings 通信失败，通常是 host 半边没加载或页面连不上。重启 DeepSeek Harness 后刷新页面。',
+      notReadyRetry: '重新检测',
+      notReadyShort: '未就绪',
     }
     const EN = {
       title: 'Cost estimate',
@@ -510,6 +517,13 @@ window.__ModuleLoader__.load({
       backfillNoTarget: 'Choose the sessions to compute first',
       backfillReady: 'Backfill service ready',
       backfillUnavailable: 'Backfill service unavailable: the Host route is not registered (host code changes need a harness restart)',
+      notReadyLoading: 'Plugin is loading…',
+      notReadyMissing: 'Plugin not ready: the host half never loaded',
+      notReadyMissingHint: 'settings has no dsh-cost namespace, so the host half is not running. Installing a bundle needs **one DeepSeek Harness restart**; refreshing the page is not enough.',
+      notReadyError: 'Plugin not ready: cannot read configuration',
+      notReadyErrorHint: 'The settings call to the host failed — usually a host half that never loaded, or a page that lost its connection. Restart DeepSeek Harness, then refresh.',
+      notReadyRetry: 'Check again',
+      notReadyShort: 'not ready',
     }
 
     // ------------------------------------------------------------------ apply
@@ -523,6 +537,22 @@ window.__ModuleLoader__.load({
 
         /** Resolved configuration: models, holidays, currency, flush cadence. */
         let config = null
+        /**
+         * Why `config` is still null, when it is.
+         *
+         * A null config used to surface as a bare `…` in the three panels and as
+         * NOTHING AT ALL in the composer, so a Host half that never loaded was
+         * indistinguishable from a plugin that was merely still booting. Worse,
+         * the one line that named the real fix — "restart the harness" — lives
+         * in the settings page BEHIND the early return this state can never
+         * pass. Tracking the reason lets every surface say it.
+         *
+         * `'loading'` is the only transient value; the pill stays invisible for
+         * it so a healthy start does not flash a warning.
+         */
+        let readiness = 'loading'
+        /** Concrete evidence for the not-ready notice, e.g. the namespace count. */
+        let readinessDetail = ''
         /** The raw namespace view, so the settings page edits what is stored. */
         let view = null
         /** sessionId -> accumulated row. Authoritative in this browser tab. */
@@ -596,9 +626,23 @@ window.__ModuleLoader__.load({
         async function pull(adoptRows) {
           try {
             const payload = unwrap(await ctx.remote.settings.describe())
-            const namespaces = Array.isArray(payload?.namespaces) ? payload.namespaces : []
+            if (payload === null || typeof payload !== 'object') {
+              readiness = 'error'
+              readinessDetail = 'settings.describe() 没有返回命名空间列表'
+              return false
+            }
+            const namespaces = Array.isArray(payload.namespaces) ? payload.namespaces : []
             const found = namespaces.find(entry => entry?.ns === NS)
-            if (found === undefined) return false
+            if (found === undefined) {
+              // A describe() that SUCCEEDS but does not list the namespace means
+              // the Host half never registered it. Almost always: the bundle was
+              // installed and the process was never restarted.
+              readiness = 'missing'
+              readinessDetail = `settings.describe() 列出了 ${namespaces.length} 个命名空间，其中没有 ${NS}`
+              return false
+            }
+            readiness = 'ready'
+            readinessDetail = ''
             revision = Number.isFinite(found.revision) ? found.revision : 0
             view = found
             adoptConfig(found.value)
@@ -614,6 +658,8 @@ window.__ModuleLoader__.load({
             }
             return true
           } catch (error) {
+            readiness = 'error'
+            readinessDetail = String(error)
             ctx.logger?.warn?.(`cost meter: settings read failed: ${String(error)}`)
             return false
           }
@@ -800,6 +846,59 @@ window.__ModuleLoader__.load({
         })
         void probeBackfill()
 
+        // ------------------------------------------------- not-ready diagnostics
+
+        /**
+         * What every surface shows while the Host namespace is unavailable.
+         *
+         * Deliberately LOUD rather than a bare `…`. The failure it names — a
+         * Host half that was never loaded — is fixed by restarting DeepSeek
+         * Harness, and nothing else in the UI says so: the settings page's own
+         * route banner sits *after* the guard that this state cannot pass.
+         * @param props - `{ compact: true }` renders the composer-pill variant.
+         */
+        function NotReady(props) {
+          const retry = () => {
+            void pull(true).then(ok => {
+              if (ok) notify()
+            })
+          }
+          if (props?.compact === true) {
+            // A button, not a dead label: the fix is outside the page, so this
+            // doubles as the "I restarted it, check again" control.
+            return h('button', {
+              type: 'button',
+              style: { ...PILL, ...(readiness === 'loading' ? MUTED : WARN) },
+              onClick: retry,
+              title: `${notReadyTitle()}\n${notReadyHint()}`,
+            }, readiness === 'loading' ? '…' : t('notReadyShort'))
+          }
+          return h('div', { style: { padding: 24, maxWidth: 620 } },
+            h('div', {
+              style: { fontWeight: 600, ...(readiness === 'loading' ? MUTED : WARN) },
+            }, notReadyTitle()),
+            h('div', { style: { ...FAINTED, marginTop: 8, lineHeight: 1.75 } }, notReadyHint()),
+            readinessDetail === '' ? null
+              : h('div', { style: { ...FAINTED, marginTop: 6, fontFamily: 'ui-monospace, monospace', fontSize: 11 } },
+                readinessDetail),
+            h('button', {
+              type: 'button', style: { ...PILL, marginTop: 14 }, onClick: retry,
+            }, t('notReadyRetry')),
+          )
+        }
+
+        /** @returns the headline for the current readiness state. */
+        function notReadyTitle() {
+          if (readiness === 'loading') return t('notReadyLoading')
+          return readiness === 'missing' ? t('notReadyMissing') : t('notReadyError')
+        }
+
+        /** @returns the actionable sentence for the current readiness state. */
+        function notReadyHint() {
+          if (readiness === 'loading') return ''
+          return readiness === 'missing' ? t('notReadyMissingHint') : t('notReadyErrorHint')
+        }
+
         // ------------------------------------------------------------ the pill
 
         const selectById = state => state?.byId ?? EMPTY_OBJECT
@@ -827,8 +926,15 @@ window.__ModuleLoader__.load({
 
           const symbol = config === null ? '¥' : (SYMBOLS[config.currency] ?? `${config.currency} `)
           const entry = ledger.get(sessionId)
-          // A row exists only once the conversation reported tokens.
-          if (config === null || entry === undefined) return null
+          // No configuration: the Host half is missing or unreachable. Staying
+          // silent here is what made "installed but not restarted" look like a
+          // plugin that does nothing at all.
+          if (config === null) {
+            return readiness === 'loading' ? null : h(NotReady, { compact: true })
+          }
+          // A row exists only once the conversation reported tokens. This is the
+          // ordinary "no spend yet" case and stays invisible on purpose.
+          if (entry === undefined) return null
 
           const isPlan = entry.credits > 0 && entry.cost === 0
           const label = isPlan ? formatCredits(entry.credits) : formatMoney(entry.cost, symbol)
@@ -1206,9 +1312,8 @@ window.__ModuleLoader__.load({
           React.useEffect(() => {
             if (draft === null && view !== null) setDraft(draftFrom(view.value))
           })
-          if (config === null || draft === null) {
-            return h('div', { style: MUTED }, '…')
-          }
+          if (config === null) return h(NotReady, null)
+          if (draft === null) return h('div', { style: MUTED }, '…')
 
           const allIds = Object.keys(byId)
           // Membership comes from the workspace registry — the same account the
@@ -1578,7 +1683,7 @@ window.__ModuleLoader__.load({
           const [scope, setScope] = React.useState('')
           const [page, setPage] = React.useState(0)
           void version
-          if (config === null) return h('div', { style: MUTED }, '…')
+          if (config === null) return h(NotReady, null)
 
           const symbol = SYMBOLS[config.currency] ?? `${config.currency} `
           const money = value => formatMoney(value, symbol)
@@ -2002,7 +2107,7 @@ window.__ModuleLoader__.load({
           const [hover, setHover] = React.useState(null)
 
           void version
-          if (config === null) return h('div', { style: { padding: 24, ...MUTED } }, '…')
+          if (config === null) return h(NotReady, null)
 
           const symbol = SYMBOLS[config.currency] ?? `${config.currency} `
           const money = value => formatMoney(value, symbol)

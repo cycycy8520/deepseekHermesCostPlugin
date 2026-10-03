@@ -486,6 +486,44 @@ node tools/smoke-load.mjs client.js        ← 最后这道是保命的
 
 - 两个插槽都用**错误边界**包住，渲染异常显示成一行可读信息，而不是空白。
 
+**4. ⛔ 静默失败：装完没重启，界面看起来「什么都没发生」。**
+
+这是用户实际报上来的问题。装了插件、只刷新页面没重启 harness 时：
+
+| 界面 | 旧行为 | 用户看到 |
+|---|---|---|
+| 侧栏「账号花费 / 项目花费」 | 无条件注册，正常显示 | ✅ 出现了 |
+| 底部 💰 药丸 | `if (config === null \|\| entry === undefined) return null` | ❌ **彻底消失，一个字都没有** |
+| 两个主面板 | `return h('div', {style: MUTED}, '…')` | ❌ 只有一个 `…` |
+| 设置页 | 同上 | ❌ 只有一个 `…` |
+
+用户原话：**"我安装后怎么没有下面的这个插件图"**。
+
+**最讽刺的地方**：设置页里**本来就有**一句能救命的诊断——
+
+```
+backfillUnavailable: '回溯服务未就绪：host 路由未注册（改过 host 代码后需要重启 harness）'
+```
+
+但它渲染在 `config === null` 的提前 return **之后**。也就是说，**唯一会说出「重启 harness」的那句话，恰好被这个状态挡在门外**。写了一句正确的话，放在了一个永远走不到的位置。
+
+**根因**：`config` 只有在 `settings.describe()` 返回的命名空间列表里找到 `dsh-cost` 时才会被赋值。host 半边没加载 → 命名空间不存在 → `config` 永远是 `null`。而 client 半边是随页面加载的，所以**侧栏能出来、药丸出不来**——这个"半死不活"的组合正是该状态的指纹。
+
+**修复**：把「为什么没有 config」变成显式状态。
+
+```js
+let readiness = 'loading'   // 'loading' | 'ready' | 'missing' | 'error'
+let readinessDetail = ''
+```
+
+- `pull()` 里区分三件事：`describe()` **调用失败**（`error`）、`describe()` **成功但列表里没有该命名空间**（`missing`）、成功（`ready`）。旧代码把前两者都当成"没找到"。
+- 四处守卫全部改渲染 `<NotReady>`：药丸渲染成一个可点的橙色「未就绪」按钮（悬停写着原因），三个面板渲染标题 + 可操作的说明 + 原始证据（如"列出了 N 个命名空间，其中没有 dsh-cost"）+ 「重新检测」按钮。
+- `'loading'` 时药丸仍然返回 `null`——正常启动不该闪一个警告。
+
+**防御**：`tools/render-states.mjs`。它用**真 React** 服务端渲染全部 6 个插槽注册，分别在「命名空间缺失」和「命名空间就绪」两种状态下，断言坏状态**必须说出原因**、且不能只有一个 `…`。文案断言用的是从源码里解析出的**真实中文串**，不是 key 名。
+
+> **一般规律**：一个「读不到配置」的分支如果 `return null`，它就是把这套插件最可能的故障模式变成了不可见。**降级路径必须自己会说话**，否则用户拿到的信息量是零，只能来问你。
+
 ### 热重载的边界（重要）
 
 | 改动位置 | 生效方式 |
@@ -635,12 +673,16 @@ Get-ChildItem <包目录> -Recurse -Force | Where-Object { $_.LinkType }
 node tools/check-package.mjs          # 分发就绪：清单字段、patch 可解析且名实相符、client id 匹配、private 已移除
 node --check index.js
 node --check client.js
-node tools/check-identifiers.mjs client.js index.js
+node tools/check-identifiers.mjs client.js index.js   # 抓"用了但没绑定"（如重命名漏改）
+node tools/check-locales.mjs client.js # 中英键位对齐，少了用户会看到原始 key
 node tools/smoke-load.mjs client.js   # 加载级冒烟：抓 TDZ 这类"语法合法但一加载就炸"的错误
+node tools/render-states.mjs client.js # 真渲染：坏状态必须说出原因，不能静默
 node tools/check-defaults.mjs index.js # 内置价表自足：空配置必须解析出完整价表与折扣日历
 ```
 
-六项全绿才算可发。前五项管"能不能装上、会不会白屏"，第六项管"装上之后用户要不要自己配"。
+八项全绿才算可发。前六项管"能不能装上、会不会白屏"，第七项管"坏了会不会说话"，第八项管"装上之后用户要不要自己配"。
+
+`render-states.mjs` 需要能解析到真 `react`：从工作目录向上找 `node_modules/react`，或用 `DSH_REACT_DIR` 指定。找不到时打印 `SKIPPED` 并退出 0（保证别人克隆下来不卡住），但**发版前要确认它是真跑了**。
 
 想确认"本机存的价表 == 出厂默认"：
 

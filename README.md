@@ -166,7 +166,8 @@ ls ~/.dsh/profiles/web/node_modules/dsh-cost-meter
 |---|---|---|
 | 左边栏没有 💰 图标 | 客户端 bundle 没被浏览器加载（模块 id 与包名不符，或页面用了缓存的旧 bundle） | **硬刷新**（Ctrl+Shift+R）。仍无 → 检查 `client.js` 里 `__ModuleLoader__.load({ id })` 是否**等于包名** |
 | 设置里没有「花费计价」/「花费分布」 | 同上 | 同上 |
-| 输入框下面没有 💰 药丸 | 该对话尚未产生 token；或既不在工作区里也没被观察到 | 先随便发一条消息；仍无 → 见上两行 |
+| 输入框下面没有 💰 药丸 | 该对话尚未产生 token（正常）；**或 host 半边没加载**——此时药丸会变成一个橙色的「未就绪」按钮，鼠标悬停写着原因 | 前者先发一条消息；后者**重启 DeepSeek Harness** |
+| 左边栏有「账号花费/项目花费」，但点进去只有一个 `…` 或一段橙色说明 | host 半边没加载，settings 里没有 `dsh-cost` 命名空间 | 面板上的橙色说明会直接写出来。**重启 DeepSeek Harness**，只刷新页面不够 |
 | 点「开始计算」报 **HTTP 404** | host 路由 `/api/cost/backfill` 未注册——**host 半边需要重启** | 重启 DeepSeek Harness |
 | 顶部显示 **「回溯服务未就绪」** | 同上（那是启动时的路由探测结果） | 重启 DeepSeek Harness |
 | 热力图只有一个格子 / 「有数据 1 天」 | 账本还没有按天数据（新装的正常现象） | 跑一次「计算未评估信息」 |
@@ -250,27 +251,40 @@ node tools/smoke-load.mjs client.js                    # 能加载 ← 保命的
 |---|---|
 | `tools/check-package.mjs` | **发布体检**：manifest 字段、patch 是否解析且指向本包、client 模块 id 是否等于包名、`private` 是否已移除 |
 | `tools/smoke-load.mjs` | **加载级冒烟测试**：用桩 loader 真实执行模块并调用 `apply`，专抓"模块级 const 引用后又声明的 const"这类 TDZ 错误 |
+| `tools/render-states.mjs` | **真渲染测试**：用真 React 把 6 个插槽组件在「host 未加载」和「正常」两种状态下服务端渲染，断言坏状态必须**说出原因**而不是静默 |
 | `tools/check-identifiers.mjs` | 作用域审计：列出"使用了但从未绑定"的名字 |
+| `tools/check-locales.mjs` | 中英键位对齐：少一个键用户就会看到原始 key 名 |
 | `tools/check-defaults.mjs` | **内置价表自足性**：断言空配置能解析出完整价表、空/脏配置会回落到内置值、低谷折扣与节假日日历都在 |
 | `tools/dump-models.mjs` | 打印生效价表（`--defaults` = 出厂内置，不带参数 = 本机存储），两边形状一致，可直接 diff |
 | `tools/scan-sessions.mjs` | 离线扫描会话日志，统计模型用量（回溯引擎的原型） |
 | `tools/pricing.mjs` | 带生效日期的价表与逐笔计价 |
 
-**发布前必跑**（六项，全绿才发）：
+**发布前必跑**（八项，全绿才发）：
 
 ```sh
 node tools/check-package.mjs
 node --check index.js
 node --check client.js
 node tools/check-identifiers.mjs client.js index.js
+node tools/check-locales.mjs client.js
 node tools/smoke-load.mjs client.js
+node tools/render-states.mjs client.js      # 需要能解析到 react，见下
 node tools/check-defaults.mjs index.js
 ```
 
+`render-states.mjs` 用**真 React** 渲染，所以需要能解析到 `react` / `react-dom`：会从工作目录向上找 `node_modules/react`，也可以用环境变量指定：
+
+```powershell
+$env:DSH_REACT_DIR = "<DSH 检出目录>\node_modules"
+node tools/render-states.mjs client.js
+```
+
+找不到 React 时它会打印 `SKIPPED` 并以 0 退出——这样别人克隆下来不会因为缺依赖而卡住，但**发版前应当确保它是真跑了**，不是被跳过。
+
 想确认「本机存的价表 == 出厂默认」，直接 diff：
 
-```sh
-node tools/dump-models.mjs --defaults > $env:TEMP\a; node tools/dump-models.mjs > $env:TEMP\b; diff $env:TEMP\a $env:TEMP\b
+```powershell
+node tools/dump-models.mjs --defaults > $env:TEMP\a; node tools/dump-models.mjs > $env:TEMP\b; Compare-Object (cat $env:TEMP\a) (cat $env:TEMP\b)
 ```
 
 `package.json` 的 `files` 字段确保只有运行必需的四个文件进入发布包：`index.js`、`client.js`、`cordis.patch.yml`、`README.md`。运行时**零依赖**——`index.js` 没有任何 import，`client.js` 只用浏览器基线里的 `react` / `react-dom`。
