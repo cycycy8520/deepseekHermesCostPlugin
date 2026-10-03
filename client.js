@@ -668,10 +668,12 @@ window.__ModuleLoader__.load({
           if (raw === null || typeof raw !== 'object') return
           for (const [sessionId, row] of Object.entries(raw)) {
             if (row === null || typeof row !== 'object') continue
-            // An empty model means attribution never worked for this row, which
-            // is a defect state rather than a real "no price entry" result
-            // (that one still records its model id). Drop it and re-baseline.
-            if (typeof row.model !== 'string' || row.model.length === 0) continue
+            // An empty model is not a reason to throw a stored row away. Rows like
+            // that are what a recompute produces when a log frame carries no model
+            // id: the tokens and the money may be unknown, but the conversation
+            // still ran, and discarding the row took its tokens AND its duration
+            // out of every total on the page — silently, on the next load. Keep it
+            // and let the "no price entry" path report it instead.
             ledger.set(sessionId, {
               baseline: { ...zeroBuckets(), ...(row.baseline ?? {}) },
               byBucket: { ...zeroBuckets(), ...(row.byBucket ?? {}) },
@@ -680,7 +682,7 @@ window.__ModuleLoader__.load({
               cost: Number.isFinite(row.cost) ? row.cost : 0,
               credits: Number.isFinite(row.credits) ? row.credits : 0,
               unpriced: Number.isFinite(row.unpriced) ? row.unpriced : 0,
-              model: row.model,
+              model: typeof row.model === 'string' ? row.model : '',
               updatedAt: Number.isFinite(row.updatedAt) ? row.updatedAt : 0,
             })
           }
@@ -1821,7 +1823,7 @@ window.__ModuleLoader__.load({
         function sumRange(row, cutoff) {
           if (cutoff === '') {
             return {
-              cost: row.cost, credits: row.credits, tokens: totalOf(row.charged), byBucket: row.byBucket,
+              cost: row.cost, credits: row.credits, tokens: tokensOf(row), byBucket: row.byBucket,
             }
           }
           let cost = 0
@@ -1856,6 +1858,30 @@ window.__ModuleLoader__.load({
               fontWeight: active ? 600 : 400,
             },
           }, label)
+        }
+
+        /**
+         * Whether a conversation's figures describe something that happened.
+         *
+         * No money and no *priced* tokens is not the same as no usage. A request
+         * whose route had no price entry still burned tokens — they are recorded as
+         * unpriced — and a session the plugin first met after the fact is all
+         * baseline. Both are real conversations with real duration, and skipping
+         * them silently removed their tool time from every total on the page.
+         * @param figures - `{ cost, credits, tokens }`, already windowed if needed.
+         */
+        function hasUsage(figures) {
+          return (figures.cost ?? 0) > 0 || (figures.credits ?? 0) > 0 || (figures.tokens ?? 0) > 0
+        }
+
+        /**
+         * A ledger row's token total: what a price covered plus what it did not.
+         *
+         * `charged` alone understates a row whose route was unpriced, and that is
+         * exactly the row a reader is most likely to be squinting at.
+         */
+        function tokensOf(row) {
+          return totalOf(row.charged) + (row.unpriced ?? 0)
         }
 
         /**
@@ -2145,8 +2171,10 @@ window.__ModuleLoader__.load({
             return item?.title ?? t('reportNoProject')
           }
 
-          // Only conversations that actually carry a figure; a baselined row
-          // that never ran is noise in every chart.
+          // Conversations that actually happened. A baselined row that never ran
+          // is noise in every chart, but a row with no *priced* figure is not the
+          // same thing — see `hasUsage`: unpriced tokens and session-only history
+          // are still conversations, and dropping them hid their duration.
           const all = []
           const cutoff = cutoffOf(range)
           for (const [id, row] of ledger) {
@@ -2154,11 +2182,11 @@ window.__ModuleLoader__.load({
             // charts, the ranking and the detail table cannot disagree about what
             // "spend" means while a date filter is on.
             const windowed = sumRange(row, cutoff)
-            if (windowed.cost === 0 && windowed.credits === 0 && windowed.tokens === 0) continue
+            const stats = byId[id]?.projectionValues?.sessionStats
+            if (!hasUsage(windowed) && stats === undefined) continue
             // The timing counters ride along so the shared detail table can show
             // its duration column on this view too; they are not sliceable by
             // date, which is why they stay all-time figures.
-            const stats = byId[id]?.projectionValues?.sessionStats
             all.push({
               id,
               workspaceId: ownerOf.get(id)?.workspaceId ?? '',
@@ -2689,15 +2717,18 @@ window.__ModuleLoader__.load({
           // all-time timing counters (those are not sliceable by date).
           const all = []
           for (const [id, row] of ledger) {
-            if (row.cost === 0 && row.credits === 0 && totalOf(row.charged) === 0) continue
             const stats = statsOf(id)
+            const figures = { cost: row.cost, credits: row.credits, tokens: tokensOf(row) }
+            // Zero usage AND no session stats means the plugin merely baselined a
+            // conversation that never ran here; anything else is a real row.
+            if (!hasUsage(figures) && stats === undefined) continue
             all.push({
               id,
               workspaceId: ownerOf.get(id)?.workspaceId ?? '',
               title: byId[id]?.displayTitle ?? byId[id]?.title ?? id,
               cost: row.cost,
               credits: row.credits,
-              tokens: totalOf(row.charged),
+              tokens: tokensOf(row),
               cacheRead: row.charged.cacheRead ?? 0,
               byBucket: row.byBucket,
               byDay: row.byDay ?? {},

@@ -124,6 +124,8 @@ const host = await import(pathToFileURL(hostPath).href)
 /** A day well outside every window the UI offers, so the time axis is testable. */
 const OLD_DAY = '2026-08-01'
 const OLD_COST = 1.0
+/** Today in the ledger's own day key, so a seeded row lands inside a window. */
+const TODAY = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10)
 stateDocument = {
   ok: true,
   version: 1,
@@ -148,6 +150,41 @@ stateDocument = {
       model: 'deepseek-flash',
       updatedAt: 1,
     },
+    // Usage whose route had no price entry: real tokens, no money. This row used
+    // to be dropped from the whole view — tokens, duration and all — because the
+    // only test was "has money or priced tokens".
+    'session-unpriced-only': {
+      baseline: { cacheRead: 0, cacheMiss: 0, cacheWrite: 0, output: 0 },
+      byBucket: { cacheRead: 0, cacheMiss: 0, cacheWrite: 0, output: 0 },
+      charged: { cacheRead: 0, cacheMiss: 0, cacheWrite: 0, output: 0 },
+      byDay: {
+        [TODAY]: {
+          tokens: 4321,
+          cost: 0,
+          credits: 0,
+          byBucket: { cacheRead: 0, cacheMiss: 0, cacheWrite: 0, output: 4321 },
+        },
+      },
+      cost: 0,
+      credits: 0,
+      unpriced: 4321,
+      model: '',
+      updatedAt: 2,
+    },
+    // A session the plugin only ever met after the fact: the whole usage is
+    // baseline, so every figure is zero — but the session ran for an hour, and
+    // an hour of tool time must not disappear because nothing was charged.
+    'session-baseline': {
+      baseline: { cacheRead: 0, cacheMiss: 0, cacheWrite: 0, output: 0 },
+      byBucket: { cacheRead: 0, cacheMiss: 0, cacheWrite: 0, output: 0 },
+      charged: { cacheRead: 0, cacheMiss: 0, cacheWrite: 0, output: 0 },
+      byDay: {},
+      cost: 0,
+      credits: 0,
+      unpriced: 0,
+      model: 'deepseek-flash',
+      updatedAt: 3,
+    },
   },
 }
 
@@ -159,19 +196,28 @@ client.apply(ctx)
 const usageOf = (overrides = {}) => ({
   cacheReadTokens: 0, uncachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 0, ...overrides,
 })
-const row = usage => ({
+const row = (usage, stats) => ({
   projectionValues: {
     tokenUsage: usage,
     modelSelection: { lastUsed: { provider: 'deepseek-official', model: 'deepseek-flash' } },
+    ...(stats === undefined ? {} : { sessionStats: stats }),
   },
 })
+/** One hour of tool time: the figure a dropped row takes with it. */
+const HOUR_MS = 3600000
 
 await new Promise(resolve => setTimeout(resolve, 50))
 snapshot = { ids: ['session-a'], byId: { 'session-a': row(usageOf()) } }
 sessionSubscriber()
 snapshot = {
-  ids: ['session-a'],
-  byId: { 'session-a': row(usageOf({ cacheReadTokens: 100000, uncachedInputTokens: 50000, outputTokens: 20000 })) },
+  ids: ['session-a', 'session-unpriced', 'session-baseline'],
+  byId: {
+    'session-a': row(usageOf({ cacheReadTokens: 100000, uncachedInputTokens: 50000, outputTokens: 20000 })),
+    // Unpriced usage still has a live projection; so does the baselined session,
+    // and that projection is the only place its duration exists.
+    'session-unpriced': row(usageOf(), { llmMs: 0, toolMs: HOUR_MS, ttftMs: 0, ttftSteps: 0, decodeMs: 0, decodeTokens: 0 }),
+    'session-baseline': row(usageOf(), { llmMs: 0, toolMs: HOUR_MS, ttftMs: 0, ttftSteps: 0, decodeMs: 0, decodeTokens: 0 }),
+  },
 }
 sessionSubscriber()
 await new Promise(resolve => setTimeout(resolve, 1200))
@@ -311,6 +357,18 @@ check('account spend is the default view',
 const ALL_TIME_TOTAL = /¥1\.13/
 const WEEK_TOTAL = /¥0\.13/
 check('the account view totals all time by default', ALL_TIME_TOTAL.test(accountText), accountText.slice(0, 100))
+
+// A conversation whose route had no price entry, and one the plugin only ever
+// baselined, both ran: they must stay in the view (and in the totals) instead of
+// being filtered out as "no figures".
+check('unpriced usage stays in the view',
+  accountText.includes('session-unpriced-only') && /4\.3K/.test(accountText),
+  accountText.includes('session-unpriced-only')
+    ? `listed, its tokens read ${accountText.match(/\d+(?:\.\d+)?K/)?.[0] ?? 'none'}`
+    : 'dropped')
+check('a baselined session still contributes its duration',
+  accountText.includes('2小时0分'),
+  accountText.match(/\d+小时[\d分秒]*/g)?.join(' ') ?? 'no duration rendered')
 
 /** Press the button whose label matches, as a user would. */
 const pressButton = (tree, label) => {
