@@ -396,11 +396,21 @@ if (projectsTabButton !== undefined) {
   const projectRow = drillRows.find(node => flatten(node).includes('md')) ?? drillRows[0]
   if (projectRow !== undefined) {
     projectRow.props.onClick()
-    const scopedText = flatten(renderSurface(
-      React.createElement(costPanel.component, shellProps), true)).replace(/\s+/g, ' ')
+    const scopedTree = renderSurface(React.createElement(costPanel.component, shellProps), true)
+    const scopedText = flatten(scopedTree).replace(/\s+/g, ' ')
     check('clicking a project row drills into that project',
       scopedText.includes(zhStrings.reportByConversation),
       scopedText.slice(0, 90))
+    // Inside a project the calendar comes first: "how long has this been going"
+    // is answered by the project's own days, with the span stated under the grid
+    // because the grid itself is always the trailing 53 weeks.
+    const gridCells = treeNodes(scopedTree).filter(node => node.type === 'rect').length
+    check('a drilled-in project shows its own activity calendar',
+      scopedText.includes(zhStrings.dashActivity) && gridCells > 300,
+      `cells=${gridCells}`)
+    check('the project calendar states the working span',
+      scopedText.includes(zhStrings.dashSpan.split('{')[0].trim()),
+      scopedText.includes(zhStrings.dashSpan.split('{')[0].trim()) ? 'span line present' : 'missing')
   }
   const noProjectRow = treeNodes(projectsTree).find(node =>
     node.props?.style?.cursor === 'pointer' && flatten(node).includes(zhStrings.reportNoProject)

@@ -368,6 +368,7 @@ window.__ModuleLoader__.load({
       dashDays: '共 {count} 天',
       dashDaysWithData: '有数据 {count} 天',
       dashHeatTotal: '合计',
+      dashSpan: '工作跨度 {span} 天：{from} → {to}（活跃 {days} 天）',
       dashByProject: '项目排行',
       dashUndated: '{count} 个对话缺少按天数据，未计入所选时间段',
       dashNeedBackfill: '{count} 个对话缺少按天数据 · 在「花费计价」重跑一次计算即可补齐',
@@ -498,6 +499,7 @@ window.__ModuleLoader__.load({
       dashDays: '{count} days',
       dashDaysWithData: '{count} days with data',
       dashHeatTotal: 'total',
+      dashSpan: 'Worked over {span} days: {from} → {to} ({days} active)',
       dashByProject: 'By project',
       dashUndated: '{count} conversations have no per-day data and are outside the selected range',
       dashNeedBackfill: '{count} conversations have no per-day data - rerun a compute in Cost to fill them in',
@@ -2146,6 +2148,9 @@ window.__ModuleLoader__.load({
               models: typeof row.model === 'string' && row.model.length > 0
                 ? row.model.split(', ')
                 : [],
+              // The per-day map rides along so a drilled-in project can show its
+              // own calendar; it is the same map the account view reads.
+              byDay: row.byDay ?? EMPTY_OBJECT,
             })
           }
           const rows = scope === '' ? all : all.filter(row => row.workspaceId === (scope === NO_PROJECT ? '' : scope))
@@ -2201,6 +2206,23 @@ window.__ModuleLoader__.load({
           const current = Math.min(page, pageCount - 1)
           const pageRows = ranked.slice(current * REPORT_PAGE, (current + 1) * REPORT_PAGE)
 
+          // Drilled into one project, the first question is "how long has this been
+          // going", and the answer is a calendar: the project's own days, all-time
+          // rather than windowed — a span you have narrowed to 7 days cannot say
+          // how long the work has lasted.
+          const projectDayTotals = new Map()
+          if (scope !== '') {
+            for (const row of rows) {
+              for (const [day, cell] of Object.entries(row.byDay)) {
+                const slot = projectDayTotals.get(day) ?? { tokens: 0, cost: 0, credits: 0 }
+                slot.tokens += cell.tokens ?? 0
+                slot.cost += cell.cost ?? 0
+                slot.credits += cell.credits ?? 0
+                projectDayTotals.set(day, slot)
+              }
+            }
+          }
+
           const share = value => (totalCost > 0 ? `${(value / totalCost * 100).toFixed(1)}%` : '—')
 
           // No data at all is a page-level state, not a line of warning text: the
@@ -2232,6 +2254,10 @@ window.__ModuleLoader__.load({
               h('span', { style: { flex: 1 } }),
               h(RangeChips, { value: range, onChange: next => { setRange(next); setPage(0) } }),
             ),
+
+            // ---- inside a project, its own calendar comes first: how long the
+            // work has been going is the question a project view is opened with
+            scope !== '' && h(ActivityPanel, { dayTotals: projectDayTotals, money }),
 
             h(StatRow, {
               stats: [
@@ -2452,10 +2478,128 @@ window.__ModuleLoader__.load({
               ...months.map(entry => h('span', {
                 key: `${entry.label}-${String(entry.column)}`,
                 // nowrap: without it a label near the right edge wraps to two
-                // lines and reads as broken text rather than a month.
+                // lines and reads as broken text rather than a broken month.
                 style: { position: 'absolute', left: entry.column * STEP, whiteSpace: 'nowrap' },
               }, entry.label)),
             ),
+          )
+        }
+
+        /**
+         * The activity heatmap block: title, switches, calendar, caption.
+         *
+         * One component for both views. The account view feeds it every
+         * conversation; a drilled-in project feeds it only that project's days,
+         * which is how "how long has this been going" gets answered for a
+         * project. The grid always spans the trailing {@link HEAT_WEEKS} weeks —
+         * a contribution graph IS a calendar — so the span line underneath states
+         * the part that a fixed grid cannot: the first and last day with data.
+         * @param props - `{ dayTotals, money, note }`; `dayTotals` maps a day key
+         * to `{ tokens, cost, credits }`, `note` is an optional faint footnote.
+         */
+        function ActivityPanel({ dayTotals, money, note }) {
+          const [metric, setMetric] = React.useState('token')
+          const [mode, setMode] = React.useState('day')
+          const [hover, setHover] = React.useState(null)
+          const dayKeys = [...dayTotals.keys()].sort()
+          if (dayKeys.length === 0) return null
+
+          const today = dayKey(Date.now())
+          const todayMs = Date.parse(`${today}T00:00:00Z`)
+          // Extend to the Saturday of the current week so the last column is whole.
+          const gridEndMs = todayMs + (6 - new Date(todayMs).getUTCDay()) * 86400000
+          const gridStartMs = gridEndMs - (HEAT_WEEKS * 7 - 1) * 86400000
+          const heatDays = daysBetween(
+            new Date(gridStartMs).toISOString().slice(0, 10),
+            new Date(gridEndMs).toISOString().slice(0, 10),
+          )
+          // The heatmap can be coloured by tokens or by money. Money is the whole
+          // point of this plugin, so it must be selectable here too.
+          const valueOfDay = cell => (metric === 'cost' ? (cell?.cost ?? 0) : (cell?.tokens ?? 0))
+          const heatValues = {}
+          if (mode === 'day') {
+            for (const day of heatDays) heatValues[day] = valueOfDay(dayTotals.get(day))
+          } else if (mode === 'week') {
+            for (const day of heatDays) {
+              const end = Date.parse(`${day}T00:00:00Z`)
+              let sum = 0
+              for (const key of dayKeys) {
+                const at = Date.parse(`${key}T00:00:00Z`)
+                if (at <= end && at > end - 7 * 86400000) sum += valueOfDay(dayTotals.get(key))
+              }
+              heatValues[day] = sum
+            }
+          } else {
+            let running = 0
+            for (const day of heatDays) {
+              running += valueOfDay(dayTotals.get(day))
+              heatValues[day] = running
+            }
+          }
+          const heatMax = Math.max(0, ...Object.values(heatValues))
+          const heatTotal = dayKeys.reduce((sum, day) => sum + valueOfDay(dayTotals.get(day)), 0)
+          const firstDay = dayKeys[0]
+          const lastDay = dayKeys[dayKeys.length - 1]
+          const spanDays = Math.round(
+            (Date.parse(`${lastDay}T00:00:00Z`) - Date.parse(`${firstDay}T00:00:00Z`)) / 86400000,
+          ) + 1
+
+          return h('div', { style: GROUP },
+            h('div', {
+              style: { display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 10, flexWrap: 'wrap' },
+            },
+              h('span', { style: { fontWeight: 600 } }, t('dashActivity')),
+              h('span', { style: { flex: 1 } }),
+              h('div', { style: { display: 'flex', gap: 4 } },
+                h(Chip, {
+                  active: metric === 'token', label: t('dashMetricToken'),
+                  onClick: () => setMetric('token'),
+                }),
+                h(Chip, {
+                  active: metric === 'cost', label: t('dashMetricCost'),
+                  onClick: () => setMetric('cost'),
+                }),
+              ),
+              h('div', { style: { display: 'flex', gap: 4 } },
+                h(Chip, { active: mode === 'day', label: t('dashDaily'), onClick: () => setMode('day') }),
+                h(Chip, { active: mode === 'week', label: t('dashWeekly'), onClick: () => setMode('week') }),
+                h(Chip, {
+                  active: mode === 'total', label: t('dashCumulative'),
+                  onClick: () => setMode('total'),
+                }),
+              ),
+            ),
+            h(ActivityHeatmap, {
+              days: heatDays,
+              values: heatValues,
+              size: heatMax,
+              format: formatTokens,
+              detailOf: day => dayTotals.get(day),
+              onHover: setHover,
+            }),
+            h('div', { style: { ...FAINTED, marginTop: 8 } },
+              `${heatDays[0] ?? '—'} ~ ${today} · ${t('dashDaysWithData', { count: dayKeys.length })}`
+              + ` · ${t('dashHeatTotal')} `
+              + (metric === 'cost' ? money(heatTotal) : `${formatTokens(heatTotal)} tok`)),
+            // "How long was this worked on": the grid is a fixed calendar, so the
+            // span it covers and the span the data covers have to be said apart.
+            h('div', { style: { ...FAINTED, marginTop: 4 } },
+              t('dashSpan', { from: firstDay, to: lastDay, span: spanDays, days: dayKeys.length })),
+            // Deliberately faint, not a warning banner: this is a footnote about
+            // missing data, and it must never out-shout the figures it sits under.
+            note === undefined ? null : h('div', { style: { ...FAINTED, marginTop: 4 } }, note),
+            hover !== null && h('div', {
+              style: {
+                position: 'fixed', zIndex: 1100, pointerEvents: 'none',
+                left: Math.min(hover.x + 12, window.innerWidth - 220),
+                top: Math.max(hover.y - 44, 8),
+                padding: '5px 9px', borderRadius: 8, fontSize: size(13),
+                border: `1px solid ${hairline}`,
+                background: 'color-mix(in srgb, Canvas 92%, CanvasText)',
+                color: 'CanvasText', boxShadow: '0 6px 18px rgba(0,0,0,.3)',
+              },
+            }, `${hover.day} · ${formatTokens(hover.detail?.tokens ?? 0)} tok`
+              + ` · ${money(hover.detail?.cost ?? 0)}`),
           )
         }
 
@@ -2489,10 +2633,8 @@ window.__ModuleLoader__.load({
           const items = useWorkspaceSel(selectItems)
           const [scope, setScope] = React.useState('')
           const [range, setRange] = React.useState('all')
-          const [mode, setMode] = React.useState('day')
-          const [metric, setMetric] = React.useState('token')
+
           const [page, setPage] = React.useState(0)
-          const [hover, setHover] = React.useState(null)
 
           void version
           if (config === null) return h(NotReady, null)
@@ -2630,63 +2772,18 @@ window.__ModuleLoader__.load({
           const current = Math.min(page, pageCount - 1)
           const pageRows = ranked.slice(current * REPORT_PAGE, (current + 1) * REPORT_PAGE)
 
-          // Heatmap series. `total` is a running sum through each day.
-          const dayKeys = [...dayTotals.keys()].sort()
-          const today = dayKey(Date.now())
-          // A contribution graph IS a calendar, so its shape must be STABLE.
-          // The grid always spans the trailing 53 weeks and renders days with no
-          // data as empty cells. Sizing it to the days that happen to carry data
-          // collapses it to a single dot, which is no longer a calendar and
-          // tells the reader nothing.
-          const todayMs = Date.parse(`${today}T00:00:00Z`)
-          // Extend to the Saturday of the current week so the last column is whole.
-          const gridEndMs = todayMs + (6 - new Date(todayMs).getUTCDay()) * 86400000
-          const gridStartMs = gridEndMs - (HEAT_WEEKS * 7 - 1) * 86400000
-          const heatDays = daysBetween(
-            new Date(gridStartMs).toISOString().slice(0, 10),
-            new Date(gridEndMs).toISOString().slice(0, 10),
-          )
-          // The heatmap can be coloured by tokens or by money. Money is the
-          // whole point of this plugin, so it must be selectable here and not
-          // only in the charts below.
-          const valueOfDay = cell => (metric === 'cost' ? (cell?.cost ?? 0) : (cell?.tokens ?? 0))
-          const heatValues = {}
-          if (mode === 'day') {
-            for (const day of heatDays) heatValues[day] = valueOfDay(dayTotals.get(day))
-          } else if (mode === 'week') {
-            for (const day of heatDays) {
-              const end = Date.parse(`${day}T00:00:00Z`)
-              let sum = 0
-              for (const key of dayKeys) {
-                const at = Date.parse(`${key}T00:00:00Z`)
-                if (at <= end && at > end - 7 * 86400000) sum += valueOfDay(dayTotals.get(key))
-              }
-              heatValues[day] = sum
-            }
-          } else {
-            let running = 0
-            for (const day of heatDays) {
-              running += valueOfDay(dayTotals.get(day))
-              heatValues[day] = running
-            }
-          }
-          const heatMax = Math.max(0, ...Object.values(heatValues))
-          const heatTotal = dayKeys.reduce((sum, day) => sum + valueOfDay(dayTotals.get(day)), 0)
+          // The heatmap block owns its own metric/mode/hover state now; this view
+          // only says which days it is about.
+          const heatNotes = []
+          if (undated.length > 0 && range !== 'all') heatNotes.push(t('dashUndated', { count: undated.length }))
+          if (undated.length > 0) heatNotes.push(t('dashNeedBackfill', { count: undated.length }))
+          const heatNote = heatNotes.length === 0 ? undefined : heatNotes.join(' ')
 
           const shareOf = value => (totalCost > 0 ? `${(value / totalCost * 100).toFixed(1)}%` : '—')
 
           if (all.length === 0) {
             return h(EmptyState, { title: t('dashEmpty'), hint: t('dashEmptyHint') })
           }
-
-          const chip = (active, label, onClick) => h('button', {
-            key: label, type: 'button', onClick,
-            style: {
-              ...BUTTON, padding: '3px 10px', fontSize: size(13),
-              background: active ? 'color-mix(in srgb, currentColor 16%, transparent)' : 'transparent',
-              fontWeight: active ? 600 : 400,
-            },
-          }, label)
 
           return h('div', null,
             // ---- filters for this view (the tab host owns the panel header)
@@ -2736,54 +2833,8 @@ window.__ModuleLoader__.load({
                 },
               ],
             }),
-            undated.length > 0 && range !== 'all' && h('div', { style: { ...FAINTED, marginBottom: 12 } },
-              t('dashUndated', { count: undated.length })),
-
             // ---- activity heatmap (rule 6: adaptive span, never a fixed year)
-            h('div', { style: GROUP },
-              h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 10 } },
-                h('span', { style: { fontWeight: 600 } }, t('dashActivity')),
-                h('span', { style: { flex: 1 } }),
-                h('div', { style: { display: 'flex', gap: 4 } },
-                  chip(metric === 'token', t('dashMetricToken'), () => setMetric('token')),
-                  chip(metric === 'cost', t('dashMetricCost'), () => setMetric('cost')),
-                ),
-                h('div', { style: { display: 'flex', gap: 4 } },
-                  chip(mode === 'day', t('dashDaily'), () => setMode('day')),
-                  chip(mode === 'week', t('dashWeekly'), () => setMode('week')),
-                  chip(mode === 'total', t('dashCumulative'), () => setMode('total')),
-                ),
-              ),
-              h(ActivityHeatmap, {
-                days: heatDays,
-                values: heatValues,
-                size: heatMax,
-                format: formatTokens,
-                detailOf: day => dayTotals.get(day),
-                onHover: setHover,
-              }),
-              h('div', { style: { ...FAINTED, marginTop: 8 } },
-                `${heatDays[0] ?? '—'} ~ ${today} · ${t('dashDaysWithData', { count: dayKeys.length })}`
-                + ` · ${t('dashHeatTotal')} `
-                + (metric === 'cost' ? money(heatTotal) : `${formatTokens(heatTotal)} tok`)),
-              // Deliberately faint, not a warning banner: this is a footnote
-              // about missing data, and it must never out-shout the figures it
-              // sits under. Emphasis belongs to the numbers.
-              undated.length > 0 && h('div', { style: { ...FAINTED, marginTop: 4 } },
-                t('dashNeedBackfill', { count: undated.length })),
-              hover !== null && h('div', {
-                style: {
-                  position: 'fixed', zIndex: 1100, pointerEvents: 'none',
-                  left: Math.min(hover.x + 12, window.innerWidth - 220),
-                  top: Math.max(hover.y - 44, 8),
-                  padding: '5px 9px', borderRadius: 8, fontSize: size(13),
-                  border: `1px solid ${hairline}`,
-                  background: 'color-mix(in srgb, Canvas 92%, CanvasText)',
-                  color: 'CanvasText', boxShadow: '0 6px 18px rgba(0,0,0,.3)',
-                },
-              }, `${hover.day} · ${formatTokens(hover.detail?.tokens ?? 0)} tok`
-                + ` · ${money(hover.detail?.cost ?? 0)}`),
-            ),
+            h(ActivityPanel, { dayTotals, money, note: heatNote }),
 
             // ---- composition and ranking
             h('div', { style: { display: 'flex', gap: 14, flexWrap: 'wrap' } },
