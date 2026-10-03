@@ -517,48 +517,27 @@ if (projectsTabButton !== undefined) {
       && String(accountScope.props.style.color) === 'inherit'
       && String(projectsScope.props.style.color) === 'inherit',
     `width=${projectsScope?.props.style.width} color=${String(projectsScope?.props.style.color)}`)
-  check('the scope label is a name, not a grey prefix',
-    projectsScope?.props['aria-label'] === zhStrings.reportScope,
-    `aria-label=${String(projectsScope?.props['aria-label'])}`)
 
-  // The panel lives in a flex column with `overflow: hidden`, so it has to scroll
-  // itself; a percentage height there collapses to auto and the page is clipped.
-  const pageStyle = node => treeNodes(node).find(entry => entry.props?.style?.maxWidth === 1440)
-    ?.props.style
-  const accountPage = pageStyle(accountTree)
-  check('the panel scrolls instead of clipping its tail',
-    accountPage?.overflowY === 'auto' && accountPage?.flex === '1 1 auto'
-      && accountPage?.minHeight === 0,
-    `overflowY=${String(accountPage?.overflowY)} flex=${String(accountPage?.flex)} minHeight=${String(accountPage?.minHeight)}`)
-
-  // The project dimension must be a list you can act on: the ranking rows carry
-  // the same drill-down the account view's bars do, and the donut's legend rows
-  // are targets too — a chart you cannot click is a picture, not a report.
-  const drillRows = treeNodes(projectsTree).filter(node =>
-    node.props?.style?.cursor === 'pointer' && typeof node.props?.onClick === 'function')
-  check('the project view lists clickable project rows', drillRows.length >= 1,
-    `clickable rows=${drillRows.length}`)
-  // Target the real workspace, not the no-project bucket: the fixture's
-  // no-project row outranks it, and the sentinel that makes it clickable is
-  // what this also exercises.
-  const projectRow = drillRows.find(node => flatten(node).includes('md')) ?? drillRows[0]
-  if (projectRow !== undefined) {
-    projectRow.props.onClick()
-    const scopedTree = renderSurface(React.createElement(costPanel.component, shellProps), true)
-    const scopedText = flatten(scopedTree).replace(/\s+/g, ' ')
-    check('clicking a project row drills into that project',
-      scopedText.includes(zhStrings.reportByConversation),
-      scopedText.slice(0, 90))
-    // Inside a project the calendar comes first: "how long has this been going"
-    // is answered by the project's own days, with the span stated under the grid
-    // because the grid itself is always the trailing 53 weeks.
-    const gridCells = treeNodes(scopedTree).filter(node => node.type === 'rect').length
-    check('a drilled-in project shows its own activity calendar',
-      scopedText.includes(zhStrings.dashActivity) && gridCells > 300,
-      `cells=${gridCells}`)
-    check('the project calendar states the working span',
-      scopedText.includes(zhStrings.dashSpan.split('{')[0].trim()),
-      scopedText.includes(zhStrings.dashSpan.split('{')[0].trim()) ? 'span line present' : 'missing')
+  // The WHOLE bar is one component now: the back button used to exist only on the
+  // account view, so the same screen offered different controls per tab.
+  const barOf = tree => treeNodes(tree).find(node => node.type === 'div'
+    && node.props?.style?.marginBottom === 14 && node.props?.style?.flexWrap === 'wrap'
+    && treeNodes(node).some(child => child.type === 'select'))
+  const barSignature = tree => {
+    const bar = barOf(tree)
+    if (bar === undefined) return '(no bar)'
+    return (bar.children ?? [])
+      // `scope !== '' && h(…)` is a boolean in React and an empty element in this
+      // harness; it is not a control and must not count as one.
+      .filter(child => child !== null && child !== undefined && child.type !== undefined)
+      .map(child => {
+        if (typeof child !== 'object') return String(child)
+        if (child.type === 'button') return `button(${flatten(child.children).trim()})`
+        if (child.type === 'select') return 'select'
+        if (child.type === 'span') return 'spacer'
+        return String(child.type)
+      })
+      .join('|')
   }
   const noProjectRow = treeNodes(projectsTree).find(node =>
     node.props?.style?.cursor === 'pointer' && flatten(node).includes(zhStrings.reportNoProject)

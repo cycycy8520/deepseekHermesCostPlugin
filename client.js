@@ -1976,6 +1976,28 @@ window.__ModuleLoader__.load({
         }
 
         /**
+         * The filter bar both views carry: back, scope, time window.
+         *
+         * The whole bar is one component because its parts drifted twice — the
+         * scope picker lost its label on one side, and the back button existed on
+         * the other — so the same screen offered different controls depending on
+         * the tab. A bar assembled in one place cannot disagree with itself.
+         * @param props - `{ scope, all, projects, labelOf, onScope, range, onRange }`.
+         */
+        function ViewBar({ scope, all, projects, labelOf, onScope, range, onRange }) {
+          return h('div', {
+            style: { display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 14 },
+          },
+            scope !== '' && h('button', {
+              type: 'button', style: BUTTON, onClick: () => onScope(''),
+            }, `← ${t('dashBack')}`),
+            h(ScopePicker, { value: scope, all, projects, labelOf, onChange: onScope }),
+            h('span', { style: { flex: 1 } }),
+            h(RangeChips, { value: range, onChange: onRange }),
+          )
+        }
+
+        /**
          * The time-window switch both views carry.
          *
          * A spend report without a date axis answers "how much ever", which is the
@@ -2382,22 +2404,16 @@ window.__ModuleLoader__.load({
           }
 
           const body = h(React.Fragment, null,
-            // ---- filters: the same two dimensions the account view offers
-            h('div', {
-              style: {
-                display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 14,
-              },
-            },
-              h(ScopePicker, {
-                value: scope,
-                all,
-                projects,
-                labelOf: projectLabel,
-                onChange: next => { setScope(next); setPage(0) },
-              }),
-              h('span', { style: { flex: 1 } }),
-              h(RangeChips, { value: range, onChange: next => { setRange(next); setPage(0) } }),
-            ),
+            // ---- the same filter bar the account view carries
+            h(ViewBar, {
+              scope,
+              all,
+              projects,
+              labelOf: projectLabel,
+              onScope: next => { setScope(next); setPage(0) },
+              range,
+              onRange: next => { setRange(next); setPage(0) },
+            }),
 
             // ---- inside a project, its own calendar comes first: how long the
             // work has been going is the question a project view is opened with
@@ -2940,27 +2956,16 @@ window.__ModuleLoader__.load({
           }
 
           return h('div', null,
-            // ---- filters for this view (the tab host owns the panel header)
-            h('div', {
-              style: {
-                display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
-                marginBottom: 14,
-              },
-            },
-              scope !== '' && h('button', {
-                type: 'button', style: { ...BUTTON, padding: '2px 10px', fontSize: size(13) },
-                onClick: () => { setScope(''); setPage(0) },
-              }, `← ${t('dashBack')}`),
-              h(ScopePicker, {
-                value: scope,
-                all,
-                projects,
-                labelOf: projectTitle,
-                onChange: next => { setScope(next); setPage(0) },
-              }),
-              h('span', { style: { flex: 1 } }),
-              h(RangeChips, { value: range, onChange: next => { setRange(next); setPage(0) } }),
-            ),
+            // ---- the same filter bar the project view carries
+            h(ViewBar, {
+              scope,
+              all,
+              projects,
+              labelOf: projectTitle,
+              onScope: next => { setScope(next); setPage(0) },
+              range,
+              onRange: next => { setRange(next); setPage(0) },
+            }),
 
             // ---- statistic cards (rule 1: three questions above the fold)
             h(StatRow, {
