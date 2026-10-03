@@ -106,7 +106,9 @@ const ctx = {
   remote: { settings: { describe: async () => ({ namespaces: [] }), update: async () => ({}) } },
   effect: callback => {
     const result = callback()
-    return typeof result === 'function' ? result : () => {}
+    const dispose = typeof result === 'function' ? result : () => {}
+    disposers.push(dispose)
+    return () => {}
   },
   inject: (_deps, callback) => {
     callback(ctx)
@@ -130,4 +132,16 @@ try {
   }
 } catch (error) {
   fail(`apply threw: ${error?.constructor?.name ?? 'Error'}: ${error?.message ?? error}`)
+}
+
+// The Client half arms a retry timer while its Host route is unreachable — the
+// ordinary case under this stub, which serves no HTTP at all. Disposing the
+// plugin's effects is what stops that timer, so this harness exits on its own
+// instead of hanging on a pending one.
+for (const dispose of disposers) {
+  try {
+    dispose()
+  } catch (error) {
+    fail(`effect disposer threw: ${error?.message ?? error}`)
+  }
 }

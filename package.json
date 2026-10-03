@@ -1,6 +1,6 @@
 {
   "name": "dsh-cost-meter",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "DeepSeek Harness 的花费统计插件：按对话/项目/模型统计花费与 token，含整页仪表盘与日历热力图，每一笔请求按它自己发生时刻的时段价计费。",
   "license": "MIT",
   "repository": {

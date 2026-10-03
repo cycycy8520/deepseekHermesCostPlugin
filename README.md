@@ -30,7 +30,7 @@ dsh plugin add https://github.com/cycycy8520/deepseekHermesCostPlugin
 
 > **本包尚未发布到 npm**，所以 `dsh plugin add dsh-cost-meter` 会失败——请用上面的 GitHub 地址。
 
-**安装后重启一次 DeepSeek Harness。** host 半边（价表命名空间）需要重启才会加载；客户端半边刷新页面即可。
+**安装后重启一次 DeepSeek Harness。** 只有 host 半边需要重启（它注册 `/api/cost/*` 路由）；之后只改客户端半边，刷新页面即可。
 
 **不需要配置价格。** 价目表出厂内置（DeepSeek 全系 + 小米 MiMo + token-plan，含 2026-09-10 调价前后两个时期），装上即开始计价。
 
@@ -115,7 +115,7 @@ dsh plugin add https://github.com/cycycy8520/deepseekHermesCostPlugin
 | 项目归属 | 工作区注册表的 `sessionIds` |
 | 按天分布 | 回溯时按每笔请求自己的时间戳落桶 |
 
-**账本存在本机的 `~/.dsh/settings.yaml` 里，不随插件分发。** 换一台机器安装，花费从零开始记。
+**账本与价表存在插件自己的文件里**：`$DSH_HOME/dsh-cost-meter/state.json`（默认 `~/.dsh/dsh-cost-meter/state.json`），不随插件分发。换一台机器安装，花费从零开始记；把这个文件拷过去即可带走历史。
 
 ---
 
@@ -239,7 +239,7 @@ node tools/smoke-load.mjs client.js                    # 能加载 ← 保命的
 
 ## 卸载
 
-设置 → 内置插件 → 找到 `dsh-cost-meter` → 卸载。账本与价表配置会留在 `~/.dsh/settings.yaml` 的 `dsh-cost` 段里，如需清理请手工删除该段。
+设置 → 内置插件 → 找到 `dsh-cost-meter` → 卸载。账本与价表配置会留在 `$DSH_HOME/dsh-cost-meter/state.json`（默认 `~/.dsh/dsh-cost-meter/state.json`），需要清理时删掉该文件（或整个目录）即可。
 
 ---
 

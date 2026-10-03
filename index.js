@@ -1,16 +1,19 @@
 /**
  * Host half of the cost meter.
  *
- * It owns exactly one thing: the `dsh-cost` settings namespace, which persists
- * the user's effective-dated price table and the machine-written spend ledger
- * to the harness settings document. No billing arithmetic happens here — the
+ * It owns exactly one thing: the durable document holding the user's
+ * effective-dated price table and the machine-written spend ledger, written to
+ * a file this package owns (`$DSH_HOME/dsh-cost-meter/state.json`) and served
+ * over three routes under `/api/cost`. No billing arithmetic happens here — the
  * Client half computes every figure — so this half exists only because the
  * browser cannot write a durable file and `localStorage` dies with the cache.
  *
- * The schema is a plain callable with a `toJSON`, which is the whole contract
- * `ctx.settings` asks of a namespace schema (`schema(value)` to resolve,
- * `schema.toJSON()` to describe). Hand-rolling it keeps this package at zero
- * dependencies, so the folder can be copied to another machine as-is.
+ * THE STORE IS DELIBERATELY OUTSIDE THE HARNESS SETTINGS API. The settings
+ * namespace seam was replaced between harness generations (`ctx.settings
+ * .register(ns, schema)` before, entry-scoped `Config` schemas plus
+ * `configEditor` after), while a plugin-owned file and a plugin-owned route
+ * have survived both. Keeping the document here also keeps a machine-written
+ * ledger out of a hand-edited, hot-reloaded configuration document.
  *
  * PRICES ARE EFFECTIVE-DATED because a model name is not a price: through
  * 2026-09-10 `deepseek-v4-flash` was the separately-priced V4-Flash-0731, and
@@ -20,6 +23,10 @@
  * off-peak. A row carrying `tokenPlan` instead describes a prepaid
  * subscription, whose usage is counted in Credits and never in money.
  */
+
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { dirname, join } from 'node:path'
 
 /** 2026 放假安排, 国办发明电〔2025〕7号. Beijing calendar dates. */
 const DEFAULT_HOLIDAYS = [
@@ -250,9 +257,9 @@ function normalizeLedger(raw) {
  * would skip ISO canonicalisation. Normalizing once, lazily (so it runs after
  * `DEFAULTS` is initialized) keeps the two paths identical.
  *
- * Deliberately NOT frozen: `settings.update` deep-merges through
- * `mergeLayers`, and a frozen array reaching an in-place write would throw on
- * the ledger flush path — far worse than the mutation it would prevent.
+ * Deliberately NOT frozen: the resolved configuration travels to the Client on
+ * every state read, and a frozen array reaching an in-place write would throw —
+ * far worse than the mutation freezing would prevent.
  * @returns {Array<object>} normalized price rows.
  */
 let defaultModelsCache
@@ -266,53 +273,50 @@ function defaultModels() {
 }
 
 /**
- * Build the namespace schema.
+ * Resolve the effective configuration from whatever the document holds.
  *
- * `ctx.settings` calls the returned function to resolve a value and
- * `toJSON()` to describe it for configuration surfaces. Every field is
- * defaulted here, so an absent or hand-edited section still resolves.
- * @returns {((input: unknown) => object) & { toJSON(): object }} the schema.
+ * Every field is defaulted here, so an absent or hand-edited document still
+ * resolves, and stored rows are normalized by the same code that normalizes the
+ * built-in table — a stored row missing `cacheWrite` must not price as `NaN`.
+ * @param raw - the document's `config` object, or anything else.
+ * @returns `{ currency, flushMs, models, holidays }`.
  */
-function createSchema() {
-  const schema = input => {
-    const value = input !== null && typeof input === 'object' ? input : {}
-    const models = Array.isArray(value.models)
-      ? value.models.map(normalizeModel).filter(model => model !== undefined)
-      : []
-    const fallback = defaultModels()
-    const holidays = Array.isArray(value.holidays)
-      ? value.holidays.filter(day => typeof day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(day))
-      : []
-    return {
-      currency: typeof value.currency === 'string' && value.currency.length > 0
-        ? value.currency
-        : DEFAULTS.currency,
-      flushMs: isNonNegative(value.flushMs) && value.flushMs >= 500 ? value.flushMs : DEFAULTS.flushMs,
-      models: models.length > 0 ? models : fallback,
-      holidays: holidays.length > 0 ? holidays : DEFAULTS.holidays,
-      ledger: normalizeLedger(value.ledger),
-    }
+export function resolveConfig(raw) {
+  const value = raw !== null && typeof raw === 'object' ? raw : {}
+  const models = Array.isArray(value.models)
+    ? value.models.map(normalizeModel).filter(model => model !== undefined)
+    : []
+  const fallback = defaultModels()
+  const holidays = Array.isArray(value.holidays)
+    ? value.holidays.filter(day => typeof day === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(day))
+    : []
+  return {
+    currency: typeof value.currency === 'string' && value.currency.length > 0
+      ? value.currency
+      : DEFAULTS.currency,
+    flushMs: isNonNegative(value.flushMs) && value.flushMs >= 500 ? value.flushMs : DEFAULTS.flushMs,
+    models: models.length > 0 ? models : fallback,
+    holidays: holidays.length > 0 ? holidays : DEFAULTS.holidays,
   }
-  // Deliberately minimal and static: this must never throw, because the same
-  // call feeds the shipped Settings surfaces.
-  schema.toJSON = () => ({
-    type: 'object',
-    properties: {
-      currency: { type: 'string', description: 'Display currency label, e.g. CNY.' },
-      flushMs: { type: 'number', description: 'Ledger flush interval in milliseconds.' },
-      models: { type: 'array', description: 'Effective-dated price table. Edit from the Cost settings page.' },
-      holidays: { type: 'array', description: 'Off-peak calendar dates, YYYY-MM-DD (Beijing).' },
-      ledger: { type: 'object', description: 'Machine-written spend ledger. Do not hand-edit.' },
-    },
-  })
-  return schema
 }
 
-/** Namespace owned by this plugin. */
-export const NAMESPACE = 'dsh-cost'
+/**
+ * Version of the on-disk document, and of the wire envelope the routes answer
+ * with. Bump it when the shape changes and migrate in {@link adoptDocument}.
+ */
+export const SCHEMA_TAG = 'dsh-cost-state/v1'
 
-/** Bumped whenever the namespace shape changes, so a reload is observable in the log. */
-export const SCHEMA_TAG = 'effective-dated-prices/v2'
+/** Harness home, without asking the framework for it (env first, then `~/.dsh`). */
+function harnessHome() {
+  const fromEnv = process.env.DSH_HOME
+  if (typeof fromEnv === 'string' && fromEnv.trim().length > 0) return fromEnv
+  return join(homedir(), '.dsh')
+}
+
+/** Absolute path of the document this half owns. */
+export function stateFilePath() {
+  return join(harnessHome(), 'dsh-cost-meter', 'state.json')
+}
 
 /**
  * Absolute pathname the Client requests, INCLUDING the `/api` mount.
@@ -320,12 +324,134 @@ export const SCHEMA_TAG = 'effective-dated-prices/v2'
  * The service doc says "absolute path below /api", but the registry keys routes
  * by the raw `url.pathname` and `assertFetchRoute` rejects anything not starting
  * with `/api/` — so the mount prefix is part of the value, not implied by it.
- * Registering `/cost/backfill` instead throws, and a swallowed promise turns
+ * Registering `/cost/state` instead throws, and a swallowed promise turns
  * that into a silent 404 at request time.
  */
+const STATE_PATH = '/api/cost/state'
+
+/** Absolute pathname the Client posts an edited price table to. */
+const CONFIG_PATH = '/api/cost/config'
+
+/** Absolute pathname the Client streams a history re-pricing run through. */
 const BACKFILL_PATH = '/api/cost/backfill'
 
-export const inject = ['settings']
+/** One JSON response, never cached: every read of a live ledger is fresh. */
+function json(value, status = 200) {
+  return new Response(JSON.stringify(value), {
+    status,
+    headers: { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' },
+  })
+}
+
+/** Whitelist the configuration keys a Client may write, so a stray field cannot land. */
+function pickConfig(raw) {
+  const out = {}
+  for (const key of ['currency', 'flushMs', 'models', 'holidays']) {
+    if (Object.prototype.hasOwnProperty.call(raw, key)) out[key] = raw[key]
+  }
+  return out
+}
+
+/**
+ * The document this half owns: lazily read, kept in memory, persisted one write
+ * at a time through a promise chain so two flushes cannot interleave a rename.
+ *
+ * A document this package cannot parse is NOT fatal and NOT destructive: the
+ * meter starts from the built-in table, logs once, and the next write replaces
+ * the file. Losing a corrupt ledger beats refusing to show the panel at all.
+ * @param ctx - the plugin's Cordis context, for logging only.
+ * @returns `{ read, commit }` over the document.
+ */
+function createStore(ctx) {
+  let state = null
+  let queue = Promise.resolve()
+  let warned = false
+
+  const log = (level, message) => {
+    const logger = ctx.logger
+    if (logger === null || logger === undefined) return
+    const write = typeof logger[level] === 'function' ? logger[level].bind(logger) : undefined
+    if (write !== undefined) write(message)
+  }
+
+  /** Accept either a previous or a foreign document shape without throwing. */
+  const adoptDocument = raw => {
+    const value = raw !== null && typeof raw === 'object' ? raw : {}
+    return {
+      version: 1,
+      revision: isNonNegative(value.revision) ? value.revision : 0,
+      config: resolveConfig(value.config),
+      ledger: normalizeLedger(value.ledger),
+    }
+  }
+
+  async function load() {
+    if (state !== null) return state
+    const path = stateFilePath()
+    try {
+      state = adoptDocument(JSON.parse(await readFile(path, 'utf8')))
+      log('info', `dsh-cost: state loaded from ${path} (${Object.keys(state.ledger).length} rows)`)
+    } catch (error) {
+      if (error?.code !== 'ENOENT' && !warned) {
+        warned = true
+        log('warn', `dsh-cost: state document unusable, starting from the built-in table: ${String(error)}`)
+      }
+      state = adoptDocument(null)
+    }
+    return state
+  }
+
+  function persist() {
+    const snapshot = state
+    queue = queue.then(async () => {
+      const path = stateFilePath()
+      await mkdir(dirname(path), { recursive: true })
+      const temp = `${path}.${process.pid}.${Date.now()}.tmp`
+      await writeFile(temp, `${JSON.stringify({
+        version: 1,
+        revision: snapshot.revision,
+        config: snapshot.config,
+        ledger: snapshot.ledger,
+      })}\n`, 'utf8')
+      await rename(temp, path)
+    }, error => log('error', `dsh-cost: state write failed: ${String(error)}`))
+    return queue
+  }
+
+  return {
+    read: load,
+    /**
+     * Merge one Client patch into the document and persist it.
+     * @param body - `{ revision?, ledger? }` and/or `{ revision?, config? }`.
+     * @returns `{ ok: true, revision, config }`, or a conflict envelope.
+     */
+    async commit(body) {
+      const document = await load()
+      const patch = body !== null && typeof body === 'object' ? body : {}
+      const expected = patch.revision
+      if (Number.isFinite(expected) && expected !== document.revision) {
+        return { ok: false, error: 'revision', revision: document.revision }
+      }
+      let changed = false
+      if (patch.ledger !== null && typeof patch.ledger === 'object') {
+        for (const [sessionId, row] of Object.entries(patch.ledger)) {
+          const normalized = normalizeLedgerRow(row)
+          if (normalized === undefined) continue
+          document.ledger[sessionId] = normalized
+          changed = true
+        }
+      }
+      if (patch.config !== null && typeof patch.config === 'object') {
+        document.config = resolveConfig({ ...document.config, ...pickConfig(patch.config) })
+        changed = true
+      }
+      if (!changed) return { ok: true, revision: document.revision, config: document.config }
+      document.revision += 1
+      await persist()
+      return { ok: true, revision: document.revision, config: document.config }
+    },
+  }
+}
 
 /** The last `usage` chunk of a stream, matching the harness's own reader. */
 function usageOf(event) {
@@ -420,32 +546,102 @@ function foldSamples(events) {
 }
 
 /**
- * Register the settings namespace and the backfill route.
+ * Register the document routes, then the backfill route.
+ *
+ * `connection` is read through a scoped inject because it activates
+ * asynchronously — `ctx.get('connection')` is still `undefined` while this half
+ * applies, so a synchronous read would silently register nothing. The two
+ * dependency sets stay separate on purpose: a composition without
+ * `sessionQuery` still gets durable state, and loses only history re-pricing.
  * @param ctx - the plugin's Cordis context.
  */
 export function apply(ctx) {
-  try {
-    ctx.settings.register(NAMESPACE, createSchema(), { applies: 'live' })
-    ctx.logger?.info?.(`dsh-cost: settings namespace registered (${SCHEMA_TAG})`)
-  } catch (error) {
-    // A reload can re-run apply before the previous registration is disposed.
-    // Losing the namespace is bad; losing the whole plugin would be worse.
-    ctx.logger?.warn?.(`dsh-cost: settings namespace not registered: ${String(error)}`)
+  const store = createStore(ctx)
+
+  const mount = (dependencies, label, routes) => {
+    ctx.inject(dependencies, scoped => {
+      scoped.effect(() => {
+        let disposed = false
+        const removers = []
+        const settle = disposer => {
+          if (disposed) void disposer()
+          else removers.push(disposer)
+        }
+
+        for (const route of routes(scoped)) {
+          void scoped.connection.fetch.register(route).then(settle, error => {
+            // Never swallow this: a failed registration only surfaces much later
+            // as an opaque 404 on the Client's request.
+            scoped.logger?.error?.(
+              `dsh-cost: route ${route.path} failed to register: ${String(error)}`,
+            )
+          })
+        }
+
+        return () => {
+          disposed = true
+          for (const remove of removers) void remove()
+        }
+      }, label)
+    })
   }
 
-  // The backfill route needs a Host transport and a session-query backend.
-  // Registering through a scoped inject keeps the meter itself — the pill and
-  // the settings page — working on a composition that provides neither.
-  ctx.inject(['connection', 'sessionQuery'], scoped => {
-    scoped.effect(() => {
-      let disposed = false
-      let remove
-      const settle = disposer => {
-        if (disposed) void disposer()
-        else remove = disposer
-      }
+  mount(['connection'], 'dsh-cost: state routes', () => [
+    {
+      path: STATE_PATH,
+      methods: ['GET', 'POST'],
+      requestBody: 'buffered',
+      /**
+       * `GET` answers the whole document; `POST` merges one patch into it.
+       * @param request - `{ revision?, ledger? }` on `POST`.
+       * @returns the document, or a revision-conflict envelope with status 409.
+       */
+      fetch: async request => {
+        if (request.method === 'GET') {
+          const document = await store.read()
+          return json({
+            ok: true,
+            version: 1,
+            revision: document.revision,
+            config: document.config,
+            ledger: document.ledger,
+          })
+        }
+        let body = null
+        try {
+          body = await request.json()
+        } catch {
+          body = null
+        }
+        const result = await store.commit(body)
+        return json(result, result.ok === true ? 200 : 409)
+      },
+    },
+    {
+      path: CONFIG_PATH,
+      methods: ['POST'],
+      requestBody: 'buffered',
+      /**
+       * Replace the price-table fields the Cost settings page edited.
+       * @param request - `{ revision?, config }`.
+       * @returns `{ ok, revision, config }`, or a revision-conflict envelope.
+       */
+      fetch: async request => {
+        let body = null
+        try {
+          body = await request.json()
+        } catch {
+          body = null
+        }
+        const result = await store.commit({ revision: body?.revision, config: body?.config })
+        return json(result, result.ok === true ? 200 : 409)
+      },
+    },
+  ])
 
-      void scoped.connection.fetch.register({
+  // The backfill route additionally needs a session-query backend.
+  mount(['connection', 'sessionQuery'], 'dsh-cost: backfill route', scoped => [
+    {
       path: BACKFILL_PATH,
       methods: ['POST'],
       requestBody: 'buffered',
@@ -490,18 +686,7 @@ export function apply(ctx) {
           headers: { 'content-type': 'application/x-ndjson', 'cache-control': 'no-store' },
         })
       },
-    }).then(settle, error => {
-      // Never swallow this: a failed registration only surfaces much later as
-      // an opaque 404 on the Client's request.
-      scoped.logger?.error?.(
-        `dsh-cost: backfill route ${BACKFILL_PATH} failed to register: ${String(error)}`,
-      )
-    })
-
-      return () => {
-        disposed = true
-        if (remove !== undefined) void remove()
-      }
-    }, 'dsh-cost: backfill route')
-  })
+    },
+  ])
 }
+

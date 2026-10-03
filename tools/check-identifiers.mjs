@@ -155,6 +155,13 @@ function declaredNames(clean) {
     // Method shorthand and plain declarations: `name(a, b) {` and `name: (a) =>`.
     /(?:^|[^\w$.])([A-Za-z_$][\w$]*)\s*\(([^()]*)\)\s*\{/g,
     /([A-Za-z_$][\w$]*)\s*:\s*\(([^()]*)\)\s*=>/g,
+    // ESM bindings: `import { a, b } from '…'`, `import d from '…'`,
+    // `import * as ns from '…'`. The halves used to take no imports at all, so
+    // this audit never needed to know about them; the Host half imports
+    // `node:` builtins now, and a regex that ignores them reports false alarms.
+    /(?:^|[\s;])import\s*\{([^}]*)\}\s*from\s*['"]/g,
+    /(?:^|[\s;])import\s+([A-Za-z_$][\w$]*)\s*(?:,\s*\{([^}]*)\})?\s*from\s*['"]/g,
+    /(?:^|[\s;])import\s*\*\s*as\s+([A-Za-z_$][\w$]*)\s*from\s*['"]/g,
   ]
   for (const pattern of patterns) {
     for (const match of clean.matchAll(pattern)) {

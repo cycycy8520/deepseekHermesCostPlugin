@@ -85,10 +85,34 @@ const problems = []
 const note = message => problems.push(message)
 
 /**
- * Build the module against a stub context and return its slot registrations.
- * @param describe - what `ctx.remote.settings.describe()` resolves to.
+ * Install a `fetch` stub for one mount.
+ *
+ * The Client reads its document from the Host's own route. The previous version
+ * stubbed `ctx.remote.settings` instead — an API the Client no longer calls — so
+ * driving it would have left BOTH states on the error path and quietly weakened
+ * every assertion below while still looking green.
+ * @param respond - maps one `(url, method)` to `{ status, body }`, or undefined
+ * for a 404.
+ * @returns the restore function.
  */
-async function mount(describe) {
+function installFetch(respond) {
+  const original = globalThis.fetch
+  globalThis.fetch = async (url, options = {}) => {
+    const answer = respond(String(url), options.method ?? 'GET')
+    if (answer === undefined) return new Response('not found', { status: 404 })
+    return new Response(answer.body === undefined ? '' : JSON.stringify(answer.body), {
+      status: answer.status,
+      headers: { 'content-type': 'application/json' },
+    })
+  }
+  return () => { globalThis.fetch = original }
+}
+
+/**
+ * Build the module against a stub context and return its slot registrations.
+ * @param respond - what the Host routes answer, per {@link installFetch}.
+ */
+async function mount(respond) {
   const spec = {}
   const fakeWindow = {
     __ModuleLoader__: { load: captured => { spec.value = captured } },
@@ -105,6 +129,7 @@ async function mount(describe) {
   })
 
   const registered = []
+  const disposers = []
   const ctx = {
     logger: { info() {}, warn() {}, error() {} },
     locale: {
@@ -125,16 +150,34 @@ async function mount(describe) {
       },
     },
     sessions: { list: { subscribe: () => () => {}, getSnapshot: () => ({ ids: [], byId: {} }) } },
-    remote: { settings: { describe, update: async () => ({}) } },
-    effect: callback => { const r = callback(); return typeof r === 'function' ? r : () => {} },
+    effect: callback => {
+      const result = callback()
+      const dispose = typeof result === 'function' ? result : () => {}
+      disposers.push(dispose)
+      return () => {}
+    },
     inject: (_deps, callback) => { callback(ctx); return () => {} },
     get: () => undefined,
   }
 
-  exported.apply(ctx)
-  // `apply` kicks off `pull()` without awaiting it; let it settle so `readiness`
-  // is the state the UI would actually paint.
-  await new Promise(done => setTimeout(done, 30))
+  const restoreFetch = installFetch(respond)
+  try {
+    exported.apply(ctx)
+    // `apply` kicks off the document read without awaiting it; let it settle so
+    // `readiness` is the state the UI would actually paint.
+    await new Promise(done => setTimeout(done, 30))
+  } finally {
+    restoreFetch()
+    // Disposing the plugin's effects is what stops its retry timer, so this
+    // harness exits on its own instead of hanging on a pending one.
+    for (const dispose of disposers) {
+      try {
+        dispose()
+      } catch (error) {
+        note(`effect disposer threw: ${error?.message ?? error}`)
+      }
+    }
+  }
   return registered
 }
 
@@ -162,7 +205,9 @@ function render(entry) {
 
 console.log(`${file}: readiness states render as intended`)
 
-const broken = await mount(async () => ({ ok: true, value: { namespaces: [] } }))
+// 404 on the state route: the Host half never registered it — the ordinary
+// "installed but not restarted" case this whole file guards.
+const broken = await mount(() => undefined)
 if (broken.length === 0) note('the module registered no slots')
 
 let sawRestartHint = 0
@@ -193,17 +238,34 @@ if (sawRestartHint === 0) {
 
 // ------------------------------------------------------ 2. the healthy state
 
-const healthy = await mount(async () => ({
-  ok: true,
-  value: {
-    namespaces: [{
-      ns: 'dsh-cost',
+// The Host route answers with a usable document: the state every surface must
+// render data in.
+const healthy = await mount((url, method) => {
+  if (!url.startsWith('/api/cost/state') || method !== 'GET') return undefined
+  return {
+    status: 200,
+    body: {
+      ok: true,
+      version: 1,
       revision: 1,
-      value: { currency: 'CNY', flushMs: 4000, models: [], holidays: [], ledger: {} },
-      user: { currency: 'CNY', models: [], holidays: [], ledger: {} },
-    }],
-  },
-}))
+      config: {
+        currency: 'CNY',
+        flushMs: 4000,
+        models: [{
+          match: 'deepseek-flash',
+          currency: 'CNY',
+          from: '2026-09-10T04:00:00.000Z',
+          to: null,
+          rates: { cacheHit: 0.04, cacheMiss: 2, cacheWrite: 0, output: 8 },
+          tokenPlan: false,
+          discount: { offPeakRatio: 0.5, peakHours: [[9, 12], [14, 18]], weekdaysOnly: true },
+        }],
+        holidays: ['2026-10-01'],
+      },
+      ledger: {},
+    },
+  }
+})
 
 let healthyOk = 0
 for (const entry of healthy) {

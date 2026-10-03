@@ -1,19 +1,23 @@
 /**
  * Prove the plugin needs NO price-table setup on a fresh machine.
  *
- * The claim under test: with no `dsh-cost:` section at all — no user layer, no
- * hand editing — the Host still resolves a complete, effective-dated price
- * table, so `adoptConfig(view.value)` on the Client prices every request.
+ * The claim under test: with no state document at all — no user layer, no hand
+ * editing — the Host still resolves a complete, effective-dated price table, so
+ * the Client prices every request.
  *
- * It imports the real `index.js`, captures the schema the Host registers, and
- * resolves it against an empty input. It then asserts the canonical table the
- * maintainer approved, so a later edit cannot silently drift away from it.
+ * It imports the real `index.js` and mounts it against a stub context, then
+ * checks both halves of the contract that replaced the settings namespace:
+ *
+ *   1. `apply()` registers the three `/api/cost` routes the Client calls
+ *   2. an absent, empty, or junk document still resolves the canonical table
  *
  * Usage: node tools/check-defaults.mjs [index.js]
  */
 
+import { mkdtempSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { resolve } from 'node:path'
 
 const indexPath = resolve(process.argv[2] ?? 'index.js')
 const problems = []
@@ -21,18 +25,28 @@ const fail = message => problems.push(message)
 
 // ----------------------------------------------------------------- 1. mount
 
-let captured
-const ctx = {
-  logger: { info() {}, warn() {}, error() {} },
-  settings: {
-    register: (namespace, schema, options) => {
-      captured = { namespace, schema, options }
-      return () => {}
+// The document is plugin-owned, so the check drives it through a scratch
+// harness home rather than a settings namespace.
+const scratchHome = mkdtempSync(join(tmpdir(), 'dsh-cost-defaults-'))
+process.env.DSH_HOME = scratchHome
+
+const routes = new Map()
+const scoped = {
+  connection: {
+    fetch: {
+      register: async route => {
+        routes.set(route.path, route)
+        return () => routes.delete(route.path)
+      },
     },
   },
-  inject: () => () => {},
-  effect: () => () => {},
-  get: () => undefined,
+  sessionQuery: { readSession: async () => ({ events: [] }) },
+  effect: run => run(),
+  logger: { info() {}, warn() {}, error() {} },
+}
+const ctx = {
+  logger: scoped.logger,
+  inject: (dependencies, callback) => callback(scoped),
 }
 
 let mod
@@ -50,23 +64,22 @@ try {
   process.exit(1)
 }
 
-if (captured === undefined) {
-  console.log(`${indexPath}: FAILED — apply() registered no settings namespace`)
-  process.exit(1)
+for (const path of ['/api/cost/state', '/api/cost/config', '/api/cost/backfill']) {
+  if (!routes.has(path)) fail(`apply() registered no ${path} route`)
 }
-if (typeof captured.schema !== 'function') {
-  console.log(`${indexPath}: FAILED — registered schema is not callable`)
+if (typeof mod.resolveConfig !== 'function') {
+  console.log(`${indexPath}: FAILED — the Host half exports no resolveConfig()`)
   process.exit(1)
 }
 
 // ---------------------------------------------------- 2. resolve with nothing
 
-/** Fresh install: the namespace is absent, so the Host resolves `{}`. */
-const fresh = captured.schema({})
+/** Fresh install: no document, so the resolver sees nothing. */
+const fresh = mod.resolveConfig(undefined)
 
-// A hand-edited or half-written section must not lose the built-in table.
-const empty = captured.schema({ models: [], holidays: [] })
-const junk = captured.schema({ models: [{ match: '   ' }, null, 7], holidays: 'nope' })
+// A hand-edited or half-written document must not lose the built-in table.
+const empty = mod.resolveConfig({ models: [], holidays: [] })
+const junk = mod.resolveConfig({ models: [{ match: '   ' }, null, 7], holidays: 'nope' })
 
 if (fresh === null || typeof fresh !== 'object') {
   console.log(`${indexPath}: FAILED — schema({}) returned ${String(fresh)}`)
@@ -132,15 +145,33 @@ for (const [index, row] of fresh.models.entries()) {
   }
 }
 
-const described = typeof captured.schema.toJSON === 'function' ? captured.schema.toJSON() : null
-if (described === null || typeof described !== 'object') {
-  fail('schema.toJSON() did not return a descriptor')
+// The route the Client actually calls must serve that same table, and a fresh
+// document must start at revision 0 so the Client's first write is never a
+// stale-revision conflict.
+const stateRoute = routes.get('/api/cost/state')
+if (stateRoute !== undefined) {
+  const response = await stateRoute.fetch(new Request('http://127.0.0.1/api/cost/state', { method: 'GET' }))
+  const payload = await response.json().catch(() => null)
+  if (response.status !== 200 || payload?.ok !== true) {
+    fail(`GET /api/cost/state answered ${response.status}`)
+  } else {
+    const served = payload.config.models.map(tuple)
+    if (served.join('\n') !== expected.join('\n')) {
+      fail('the state route did not serve the built-in table')
+    }
+    if (payload.revision !== 0) fail(`a fresh document should be revision 0, got ${payload.revision}`)
+    if (payload.ledger === null || typeof payload.ledger !== 'object') fail('the state route served no ledger object')
+  }
 }
+
+const statePath = mod.stateFilePath()
+if (!statePath.startsWith(scratchHome)) fail(`stateFilePath() escaped DSH_HOME: ${statePath}`)
 
 // ---------------------------------------------------------------- 4. report
 
 console.log(`${indexPath}: defaults are self-sufficient`)
-console.log(`  namespace   : ${captured.namespace} (${mod.SCHEMA_TAG ?? 'no tag'})`)
+console.log(`  document    : ${statePath} (${mod.SCHEMA_TAG ?? 'no tag'})`)
+console.log(`  routes      : ${[...routes.keys()].join(', ')}`)
 console.log(`  currency    : ${fresh.currency}`)
 console.log(`  price rows  : ${fresh.models.length} (from an empty section)`)
 console.log(`  holidays    : ${holidayCount} off-peak dates`)
@@ -158,3 +189,4 @@ if (problems.length > 0) {
   for (const problem of problems) console.log(`  FAIL ${problem}`)
   process.exitCode = 1
 }
+rmSync(scratchHome, { recursive: true, force: true })

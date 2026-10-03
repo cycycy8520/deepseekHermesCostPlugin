@@ -392,9 +392,9 @@ window.__ModuleLoader__.load({
       backfillUnavailable: '回溯服务未就绪：host 路由未注册（改过 host 代码后需要重启 harness）',
       notReadyLoading: '插件正在加载…',
       notReadyMissing: '插件未就绪：host 半边没有加载',
-      notReadyMissingHint: 'settings 里没有 dsh-cost 命名空间，说明 host 半边没跑起来。装完插件后需要**重启一次 DeepSeek Harness**，只刷新页面不够。',
-      notReadyError: '插件未就绪：读不到配置',
-      notReadyErrorHint: '与 host 的 settings 通信失败，通常是 host 半边没加载或页面连不上。重启 DeepSeek Harness 后刷新页面。',
+      notReadyMissingHint: '插件的 host 路由 `/api/cost/state` 没有应答（HTTP 404），说明 host 半边没跑起来。装完插件后需要**重启一次 DeepSeek Harness**，只刷新页面不够——客户端半边会热更新，host 半边不会。',
+      notReadyError: '插件未就绪：读不到花费文档',
+      notReadyErrorHint: '与 host 的 `/api/cost/state` 通信失败，通常是 host 半边没加载或页面连不上。重启 DeepSeek Harness 后刷新页面。',
       notReadyRetry: '重新检测',
       notReadyShort: '未就绪',
     }
@@ -519,9 +519,9 @@ window.__ModuleLoader__.load({
       backfillUnavailable: 'Backfill service unavailable: the Host route is not registered (host code changes need a harness restart)',
       notReadyLoading: 'Plugin is loading…',
       notReadyMissing: 'Plugin not ready: the host half never loaded',
-      notReadyMissingHint: 'settings has no dsh-cost namespace, so the host half is not running. Installing a bundle needs **one DeepSeek Harness restart**; refreshing the page is not enough.',
-      notReadyError: 'Plugin not ready: cannot read configuration',
-      notReadyErrorHint: 'The settings call to the host failed — usually a host half that never loaded, or a page that lost its connection. Restart DeepSeek Harness, then refresh.',
+      notReadyMissingHint: 'The plugin\'s host route `/api/cost/state` did not answer (HTTP 404), so the host half is not running. Installing a bundle needs **one DeepSeek Harness restart**; refreshing the page is not enough — the client half hot-reloads, the host half does not.',
+      notReadyError: 'Plugin not ready: cannot read the cost document',
+      notReadyErrorHint: 'Talking to the host\'s `/api/cost/state` failed — usually a host half that never loaded, or a page that lost its connection. Restart DeepSeek Harness, then refresh.',
       notReadyRetry: 'Check again',
       notReadyShort: 'not ready',
     }
@@ -529,7 +529,11 @@ window.__ModuleLoader__.load({
     // ------------------------------------------------------------------ apply
 
     return {
-      inject: ['slots', 'locale', 'sessions', 'remote', 'remote.settings'],
+      // `remote.settings` used to be required here, which meant a harness that
+      // renamed or dropped that service killed the whole plugin at apply time.
+      // The meter now reads its own Host routes with plain `fetch`, so only the
+      // three long-lived UI services stay injected.
+      inject: ['slots', 'locale', 'sessions'],
       apply(ctx) {
         ctx.effect(() => ctx.locale.register(NS, 'zh', ZH), 'dsh-cost: zh')
         ctx.effect(() => ctx.locale.register(NS, 'en', EN), 'dsh-cost: en')
@@ -551,10 +555,33 @@ window.__ModuleLoader__.load({
          * it so a healthy start does not flash a warning.
          */
         let readiness = 'loading'
-        /** Concrete evidence for the not-ready notice, e.g. the namespace count. */
+        /** Concrete evidence for the not-ready notice, e.g. the route's status. */
         let readinessDetail = ''
-        /** The raw namespace view, so the settings page edits what is stored. */
+        /** The stored document, shaped like the settings page expects. */
         let view = null
+        /**
+         * Backoff for the Host-document read, in milliseconds.
+         *
+         * The Host half registers its routes from an asynchronous activation, so
+         * the first read can lose that race; a bundle installed without a
+         * restart answers 404 until the process is replaced. Retrying is what
+         * keeps either case from settling into a dead panel, and the last delay
+         * is the steady-state poll for a Host that appears later.
+         */
+        const RETRY_DELAYS = [500, 1000, 2000, 4000, 8000, 15000]
+        /** Backoff cursor for that read. */
+        let stateAttempt = 0
+        /** Pending retry timer for that read. */
+        let stateTimer = null
+        /**
+         * Whether this plugin instance was torn down.
+         *
+         * The first read fails asynchronously, so a teardown that only clears the
+         * *current* timer can still be overtaken by a retry armed afterwards —
+         * which is exactly what leaves a headless loader hanging on a timer
+         * nobody will ever fire.
+         */
+        let stateDisposed = false
         /** sessionId -> accumulated row. Authoritative in this browser tab. */
         const ledger = new Map()
         let revision = 0
@@ -581,14 +608,7 @@ window.__ModuleLoader__.load({
           return () => listeners.delete(listener)
         }
 
-        /** Unwrap a Remote result, tolerating both the wrapped and raw shapes. */
-        function unwrap(result) {
-          if (result === null || typeof result !== 'object') return result
-          if (result.ok === true) return result.value
-          if (result.ok === false) return undefined
-          return result
-        }
-
+        /** Adopt one Host configuration answer; every field falls back. */
         function adoptConfig(value) {
           const models = Array.isArray(value?.models) ? value.models : []
           const holidays = Array.isArray(value?.holidays) ? value.holidays : []
@@ -622,45 +642,52 @@ window.__ModuleLoader__.load({
           }
         }
 
-        /** Pull configuration, and the ledger on first load only. */
+        /**
+         * Pull the stored configuration, and the ledger on first load only.
+         *
+         * The document comes from this plugin's own Host route rather than a
+         * settings namespace: `GET /api/cost/state` is answered by whatever
+         * harness generation is running, so the plugin no longer breaks when the
+         * settings API is replaced. A 404 here is the case the readiness model
+         * exists to name — the Host half is not registered in this process.
+         */
         async function pull(adoptRows) {
           try {
-            const payload = unwrap(await ctx.remote.settings.describe())
-            if (payload === null || typeof payload !== 'object') {
-              readiness = 'error'
-              readinessDetail = 'settings.describe() 没有返回命名空间列表'
+            const response = await fetch('/api/cost/state', {
+              headers: { accept: 'application/json' },
+            })
+            if (response.status === 404 || response.status === 405) {
+              // The Host half never registered its routes: almost always a fresh
+              // install that was never restarted, since only the Client half of
+              // a plugin bundle hot-reloads.
+              readiness = 'missing'
+              readinessDetail = `GET /api/cost/state → HTTP ${response.status}（host 半边没有注册这条路由）`
               return false
             }
-            const namespaces = Array.isArray(payload.namespaces) ? payload.namespaces : []
-            const found = namespaces.find(entry => entry?.ns === NS)
-            if (found === undefined) {
-              // A describe() that SUCCEEDS but does not list the namespace means
-              // the Host half never registered it. Almost always: the bundle was
-              // installed and the process was never restarted.
-              readiness = 'missing'
-              readinessDetail = `settings.describe() 列出了 ${namespaces.length} 个命名空间，其中没有 ${NS}`
+            if (!response.ok) {
+              readiness = 'error'
+              readinessDetail = `GET /api/cost/state → HTTP ${response.status}`
+              return false
+            }
+            const payload = await response.json()
+            if (payload?.ok !== true || payload.config === null || typeof payload.config !== 'object') {
+              readiness = 'error'
+              readinessDetail = 'GET /api/cost/state 的应答不是有效的花费文档'
               return false
             }
             readiness = 'ready'
             readinessDetail = ''
-            revision = Number.isFinite(found.revision) ? found.revision : 0
-            view = found
-            adoptConfig(found.value)
-            if (adoptRows) {
-              // The ledger is machine-written, and the registered schema gates
-              // only the RESOLVED value. Reading the RAW user layer keeps a
-              // column the running Host does not yet know about: the schema
-              // would strip `byDay` on the way out, so the data would be
-              // written but unreadable until the process restarted. `user`
-              // ships in the same descriptor (`describe()` documents it as the
-              // raw user layer) and `adoptLedger` sanitizes defensively.
-              adoptLedger(found.user?.ledger ?? found.value?.ledger)
-            }
+            revision = Number.isFinite(payload.revision) ? payload.revision : 0
+            // The settings page edits `view.value` and re-reads it after a save,
+            // so the stored document is presented in the shape it already knows.
+            view = { ns: NS, value: payload.config, user: payload.config, revision, writable: true }
+            adoptConfig(payload.config)
+            if (adoptRows) adoptLedger(payload.ledger)
             return true
           } catch (error) {
             readiness = 'error'
             readinessDetail = String(error)
-            ctx.logger?.warn?.(`cost meter: settings read failed: ${String(error)}`)
+            ctx.logger?.warn?.(`cost meter: state read failed: ${String(error)}`)
             return false
           }
         }
@@ -681,19 +708,44 @@ window.__ModuleLoader__.load({
           return rows
         }
 
+        /**
+         * Send one patch to the Host document.
+         *
+         * A patch carrying `ledger` merges rows; anything else is a price-table
+         * edit. Both answer `{ ok, revision }`, and the revision travels back so
+         * the next write cannot be refused as stale.
+         * @param patch - `{ ledger }` or the edited `{ models, currency, flushMs }`.
+         * @returns the Host's answer envelope.
+         * @throws when the Host refused the write, so the settings page can say so.
+         */
         async function write(patch) {
-          const payload = unwrap(await ctx.remote.settings.update(NS, patch, revision))
-          if (Number.isFinite(payload?.revision)) revision = payload.revision
+          const carriesLedger = patch !== null && typeof patch === 'object' && 'ledger' in patch
+          const response = await fetch(carriesLedger ? '/api/cost/state' : '/api/cost/config', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify(carriesLedger
+              ? { revision, ledger: patch.ledger }
+              : { revision, config: patch }),
+          })
+          const payload = await response.json().catch(() => null)
+          if (payload?.ok !== true) {
+            throw new Error(payload?.error === 'revision'
+              ? 'revision conflict (re-read and retried)'
+              : (payload?.error ?? `HTTP ${response.status}`))
+          }
+          if (Number.isFinite(payload.revision)) revision = payload.revision
+          readiness = 'ready'
+          readinessDetail = ''
           return payload
         }
 
         /**
          * Send only the rows that changed.
          *
-         * `settings.update` merges recursively, so a sparse ledger patch lands
-         * beside the rows it does not mention. Resending the whole ledger would
-         * make every write O(conversations) — megabytes per flush once a project
-         * has hundreds of them — for no benefit.
+         * The Host merges a sparse ledger patch beside the rows it does not
+         * mention. Resending the whole ledger would make every write
+         * O(conversations) — megabytes per flush once a project has hundreds of
+         * them — for no benefit.
          */
         async function flush() {
           writeTimer = null
@@ -812,39 +864,59 @@ window.__ModuleLoader__.load({
             'dsh-cost: session list observation')
         }
         ctx.effect(() => () => {
+          stateDisposed = true
           if (writeTimer !== null) clearTimeout(writeTimer)
+          if (stateTimer !== null) clearTimeout(stateTimer)
         }, 'dsh-cost: ledger timer')
 
-        void pull(true).then(async ok => {
+        /**
+         * Read the Host document, retrying with backoff until it answers.
+         *
+         * The Host half registers its routes from an asynchronous activation, so
+         * the first read can legitimately lose that race; a bundle installed
+         * without a restart answers 404 until the process is replaced. Retrying
+         * keeps either case from settling into a dead panel — the notice stays
+         * up, with its reason, until a read succeeds. Nothing is seeded into
+         * storage either: the Host already resolves the effective-dated built-in
+         * table, so a fresh install reads prices without writing anything.
+         * @param adoptRows - whether the ledger travels with this read.
+         * @returns whether the read succeeded.
+         */
+        async function attemptLoad(adoptRows) {
+          const ok = await pull(adoptRows)
           loaded = ok
           if (ok) {
             if (ctx.sessions?.list !== undefined) fold(ctx.sessions.list.getSnapshot())
-            // Persist the effective-dated defaults once, so the settings page
-            // edits stored values instead of describing implicit ones. Skipped
-            // when the Host resolves the old shape: writing dates it does not
-            // understand would persist rows it then strips.
-            const models = Array.isArray(view?.value?.models) ? view.value.models : []
-            const dated = models.some(model => model !== null && typeof model === 'object'
-              && Object.prototype.hasOwnProperty.call(model, 'from'))
-            const stored = view?.user !== null && typeof view?.user === 'object'
-              && Array.isArray(view.user.models) && view.user.models.length > 0
-            if (dated && !stored) {
-              try {
-                await write({
-                  models,
-                  currency: view.value.currency,
-                  holidays: view.value.holidays,
-                })
-                await pull(false)
-                ctx.logger?.info?.('cost meter: seeded the price table into settings')
-              } catch (error) {
-                ctx.logger?.warn?.(`cost meter: price table seeding failed: ${String(error)}`)
-              }
-            }
+            notify()
+            return true
           }
+          const delay = RETRY_DELAYS[Math.min(stateAttempt, RETRY_DELAYS.length - 1)]
+          stateAttempt += 1
+          if (stateDisposed) return false
+          if (stateTimer !== null) clearTimeout(stateTimer)
+          stateTimer = setTimeout(() => {
+            stateTimer = null
+            void attemptLoad(adoptRows)
+          }, delay)
           notify()
-        })
+          return false
+        }
+
+        /** Retry right now: what every not-ready surface's button calls. */
+        function retryNow() {
+          if (stateTimer !== null) {
+            clearTimeout(stateTimer)
+            stateTimer = null
+          }
+          stateAttempt = 0
+          readiness = 'loading'
+          notify()
+          void attemptLoad(true)
+        }
+
+        void attemptLoad(true)
         void probeBackfill()
+
 
         // ------------------------------------------------- not-ready diagnostics
 
@@ -858,11 +930,9 @@ window.__ModuleLoader__.load({
          * @param props - `{ compact: true }` renders the composer-pill variant.
          */
         function NotReady(props) {
-          const retry = () => {
-            void pull(true).then(ok => {
-              if (ok) notify()
-            })
-          }
+          // A restarted host is exactly what this panel is waiting for, so the
+          // button drives the same retry loop the background poll uses.
+          const retry = () => retryNow()
           if (props?.compact === true) {
             // A button, not a dead label: the fix is outside the page, so this
             // doubles as the "I restarted it, check again" control.
