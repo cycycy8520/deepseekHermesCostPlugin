@@ -1940,14 +1940,36 @@ window.__ModuleLoader__.load({
          *
          * A single 100% slice cannot be expressed as an arc (start and end
          * coincide), so that case draws a circle instead of a degenerate path.
-         * @param props - `{ slices, size }`; `size` is the drawn diameter in px.
+         *
+         * Slices are drill targets when the caller passes `onSelect`: the shape is
+         * the part of the chart a reader aims at, and a share that can only be
+         * acted on through the legend beside it is a picture rather than a control.
+         * A slice with no `id` (the "other" remainder) is not clickable, because
+         * there is nothing to drill into.
+         * @param props - `{ slices, size, onSelect, titleOf }`; `size` is the drawn
+         * diameter in px, `titleOf(slice)` supplies the hover text.
          */
-        function Pie({ slices, size = 150 }) {
+        function Pie({ slices, size = 150, onSelect, titleOf }) {
           const total = slices.reduce((sum, slice) => sum + slice.value, 0)
           if (!(total > 0)) return null
+          const target = slice => (typeof onSelect === 'function' && slice.id !== undefined
+            ? {
+              onClick: () => onSelect(slice),
+              style: { cursor: 'pointer' },
+              hitTitle: titleOf === undefined ? undefined : titleOf(slice),
+            }
+            : {})
+          // `title` must be an SVG child element to become the native tooltip.
+          const shape = (slice, drawing) => {
+            const { hitTitle, ...handlers } = target(slice)
+            return h(drawing.type, { ...drawing.props, ...handlers },
+              hitTitle === undefined ? null : h('title', null, hitTitle))
+          }
           if (slices.length === 1) {
             return h('svg', { viewBox: '0 0 100 100', width: size, height: size },
-              h('circle', { cx: 50, cy: 50, r: 42, fill: slices[0].color }))
+              shape(slices[0], {
+                type: 'circle', props: { cx: 50, cy: 50, r: 42, fill: slices[0].color },
+              }))
           }
           let angle = -Math.PI / 2
           const paths = []
@@ -1959,10 +1981,13 @@ window.__ModuleLoader__.load({
             const y1 = 50 + 42 * Math.sin(from)
             const x2 = 50 + 42 * Math.cos(angle)
             const y2 = 50 + 42 * Math.sin(angle)
-            paths.push(h('path', {
-              key: String(index),
-              d: `M50,50 L${x1.toFixed(3)},${y1.toFixed(3)} A42,42 0 ${sweep > Math.PI ? 1 : 0} 1 ${x2.toFixed(3)},${y2.toFixed(3)} Z`,
-              fill: slice.color,
+            paths.push(shape(slice, {
+              type: 'path',
+              props: {
+                key: String(index),
+                d: `M50,50 L${x1.toFixed(3)},${y1.toFixed(3)} A42,42 0 ${sweep > Math.PI ? 1 : 0} 1 ${x2.toFixed(3)},${y2.toFixed(3)} Z`,
+                fill: slice.color,
+              },
             }))
           }
           return h('svg', { viewBox: '0 0 100 100', width: size, height: size }, ...paths)
@@ -2225,6 +2250,13 @@ window.__ModuleLoader__.load({
 
           const share = value => (totalCost > 0 ? `${(value / totalCost * 100).toFixed(1)}%` : '—')
 
+          // One drill-down handler shared by the donut's slices, its legend rows
+          // and the ranking bars; scoped to a single project the pie shows
+          // conversations, which are not a scope this view can enter.
+          const drillInto = pieByProject
+            ? slice => { setScope(slice.id === '' ? NO_PROJECT : slice.id); setPage(0) }
+            : undefined
+
           // No data at all is a page-level state, not a line of warning text: the
           // same component the account view uses says it the same way here.
           if (all.length === 0) {
@@ -2305,14 +2337,17 @@ window.__ModuleLoader__.load({
                 h('div', {
                   style: { display: 'flex', gap: 22, alignItems: 'center', flexWrap: 'wrap', maxWidth: 620 },
                 },
-                  h(Pie, { slices: pieSlices, size: 168 }),
-                  h(Legend, {
+                  // Both the slices and the legend rows drill into the project:
+                  // the shape is what a reader aims at, the list is what they
+                  // read, and a chart where only the list works feels broken.
+                  h(Pie, {
                     slices: pieSlices,
-                    money,
-                    onSelect: pieByProject
-                      ? slice => { if (slice.id !== undefined) { setScope(slice.id === '' ? NO_PROJECT : slice.id); setPage(0) } }
-                      : undefined,
+                    size: 168,
+                    onSelect: drillInto,
+                    titleOf: slice => `${slice.label} · ${money(slice.value)} ${share(slice.value)}`
+                      + (drillInto === undefined ? '' : ` · ${t('reportDrill')}`),
                   }),
+                  h(Legend, { slices: pieSlices, money, onSelect: drillInto }),
                 ),
               ),
 

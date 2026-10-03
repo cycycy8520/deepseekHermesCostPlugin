@@ -383,6 +383,33 @@ if (projectsTabButton !== undefined) {
 
   /* ------------------------------------------------- the project drill-down */
 
+  // The donut's SLICES must be targets too, not only the legend beside it: the
+  // shape is what a reader aims at. The bucket donut on the account view has
+  // nothing to drill into, so its slices must stay inert.
+  const bucketSlices = treeNodes(accountTree)
+    .filter(node => node.type === 'path' && typeof node.props?.onClick === 'function')
+  check('the bucket donut is not a drill target', bucketSlices.length === 0,
+    `clickable bucket slices=${bucketSlices.length}`)
+
+  const pieSlices = treeNodes(projectsTree)
+    .filter(node => node.type === 'path' && typeof node.props?.onClick === 'function')
+  check('the project donut slices are drill targets', pieSlices.length >= 1,
+    `clickable slices=${pieSlices.length}`)
+  const sliceForProject = pieSlices.find(node => flatten(node).includes('md')) ?? pieSlices[0]
+  if (sliceForProject !== undefined) {
+    sliceForProject.props.onClick()
+    const viaPieText = flatten(renderSurface(
+      React.createElement(costPanel.component, shellProps), true)).replace(/\s+/g, ' ')
+    check('clicking a pie slice drills into that project',
+      viaPieText.includes(zhStrings.reportByConversation),
+      viaPieText.slice(0, 90))
+    // Back to "all projects" through the scope dropdown, so the checks below
+    // start from the unscoped view again.
+    const scopeSelect = treeNodes(projectsTree).find(node => node.type === 'select'
+      && flatten(node.children).includes(zhStrings.reportAllProjects))
+    if (scopeSelect !== undefined) scopeSelect.props.onChange({ target: { value: '' } })
+  }
+
   // The project dimension must be a list you can act on: the ranking rows carry
   // the same drill-down the account view's bars do, and the donut's legend rows
   // are targets too — a chart you cannot click is a picture, not a report.
