@@ -1762,6 +1762,7 @@ window.__ModuleLoader__.load({
                 },
               }),
               h('span', {
+                title: label,
                 style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
               }, label),
             ),
@@ -1787,23 +1788,46 @@ window.__ModuleLoader__.load({
          */
         function Composition({ title, slices, money, empty, style }) {
           const total = slices.reduce((sum, slice) => sum + slice.value, 0)
-          const share = value => (total > 0 ? `${(value / total * 100).toFixed(1)}%` : '—')
           return h('div', { style: { ...GROUP, ...style } },
             h('div', { style: { fontWeight: 600, marginBottom: 10 } }, title),
             total <= 0
               ? h(EmptyState, { title: empty, compact: true })
-              : h('div', { style: { display: 'flex', gap: 24, alignItems: 'center', flexWrap: 'wrap' } },
+              : h('div', {
+                style: {
+                  display: 'flex', gap: 24, alignItems: 'center', flexWrap: 'wrap',
+                  // Donut and legend read as one unit; letting the row stretch made
+                  // the chart look abandoned on the left of an empty group.
+                  maxWidth: 620,
+                },
+              },
                 h(Pie, { slices: slices.filter(slice => slice.value > 0), size: 168 }),
-                h('div', { style: { flex: '1 1 240px', minWidth: 0 } },
-                  ...slices.map((slice, index) => h(LegendRow, {
-                    key: String(index),
-                    color: slice.color,
-                    label: slice.label,
-                    text: money(slice.value),
-                    share: share(slice.value),
-                    dim: !(slice.value > 0),
-                  }))),
+                h(Legend, { slices, money }),
               ),
+          )
+        }
+
+        /**
+         * The legend beside a donut.
+         *
+         * Bounded on purpose. The money and share columns stay aligned across
+         * rows, but a legend that stretches to the group's width parks them a
+         * screen away from the labels they belong to — the numbers stop reading as
+         * part of their row. `flex: 0 1 340px` keeps the pair together and still
+         * wraps under the chart on a narrow panel.
+         * @param props - `{ slices, money }`; a zero slice is dimmed, never dropped.
+         */
+        function Legend({ slices, money }) {
+          const total = slices.reduce((sum, slice) => sum + slice.value, 0)
+          const share = value => (total > 0 ? `${(value / total * 100).toFixed(1)}%` : '—')
+          return h('div', { style: { flex: '0 1 340px', minWidth: 0 } },
+            ...slices.map((slice, index) => h(LegendRow, {
+              key: String(index),
+              color: slice.color,
+              label: slice.label,
+              text: money(slice.value),
+              share: share(slice.value),
+              dim: !(slice.value > 0),
+            })),
           )
         }
 
@@ -2114,17 +2138,11 @@ window.__ModuleLoader__.load({
                 h('div', { style: { ...GROUP, flex: REPORT_COLUMN } },
                   h('div', { style: { fontWeight: 600, marginBottom: 10 } },
                     pieByProject ? t('reportByProject') : t('reportByConversation')),
-                  h('div', { style: { display: 'flex', gap: 22, alignItems: 'center', flexWrap: 'wrap' } },
+                  h('div', {
+                    style: { display: 'flex', gap: 22, alignItems: 'center', flexWrap: 'wrap', maxWidth: 620 },
+                  },
                     h(Pie, { slices: pieSlices, size: 168 }),
-                    h('div', { style: { flex: '1 1 240px', minWidth: 0 } },
-                      ...pieSlices.map((slice, index) => h(LegendRow, {
-                        key: String(index),
-                        color: slice.color,
-                        label: slice.label,
-                        text: money(slice.value),
-                        share: share(slice.value),
-                      })),
-                    ),
+                    h(Legend, { slices: pieSlices, money }),
                   ),
                 ),
 

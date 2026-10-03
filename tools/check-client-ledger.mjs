@@ -372,6 +372,15 @@ if (projectsTabButton !== undefined) {
     `account max=${maxFontOf(accountTree)}px cards=${statCardsOf(accountTree)}`)
   check('the panel note belongs to the panel, not to one tab',
     accountTextNow.includes(zhStrings.reportIntro) && projectsTextNow.includes(zhStrings.reportIntro))
+
+  // A legend that stretches to the group's width parks its money a screen away
+  // from the labels it belongs to, which is unreadable however correct the
+  // numbers are — so the legend block must be bounded on both views.
+  const legendBlocks = tree => styleOfNodes(tree)
+    .filter(style => typeof style.flex === 'string' && /^0 1 \d+px$/.test(style.flex)).length
+  check('the legend stays beside its labels',
+    legendBlocks(accountTree) >= 1 && legendBlocks(projectsTree) >= 2,
+    `bounded legend blocks: account=${legendBlocks(accountTree)} projects=${legendBlocks(projectsTree)}`)
   check('both views state their cost basis',
     accountTextNow.includes(zhStrings.costInRange) && projectsTextNow.includes(zhStrings.costAllTime),
     `${zhStrings.costInRange} / ${zhStrings.costAllTime}`)
