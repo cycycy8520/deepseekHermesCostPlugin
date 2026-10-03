@@ -121,12 +121,34 @@ const ctx = {
 /* ---------------------------------------------------------------- harness */
 
 const host = await import(pathToFileURL(hostPath).href)
+/** A day well outside every window the UI offers, so the time axis is testable. */
+const OLD_DAY = '2026-08-01'
+const OLD_COST = 1.0
 stateDocument = {
   ok: true,
   version: 1,
   revision: 7,
   config: { ...host.resolveConfig(null), flushMs: 600 },
-  ledger: {},
+  ledger: {
+    'session-old': {
+      baseline: { cacheRead: 0, cacheMiss: 0, cacheWrite: 0, output: 0 },
+      byBucket: { cacheRead: 0, cacheMiss: 0, cacheWrite: 0, output: 0 },
+      charged: { cacheRead: 0, cacheMiss: 0, cacheWrite: 0, output: 1000 },
+      byDay: {
+        [OLD_DAY]: {
+          tokens: 1000,
+          cost: OLD_COST,
+          credits: 0,
+          byBucket: { cacheRead: 0, cacheMiss: 0, cacheWrite: 0, output: 1000 },
+        },
+      },
+      cost: OLD_COST,
+      credits: 0,
+      unpriced: 0,
+      model: 'deepseek-flash',
+      updatedAt: 1,
+    },
+  },
 }
 
 runInThisContext(bundle, { filename: 'dsh-cost-meter-client.js' })
@@ -284,7 +306,20 @@ check('both view tabs render',
 check('account spend is the default view',
   accountText.includes(zhStrings.dashActivity) && !accountText.includes(zhStrings.reportByModel),
   accountText.slice(0, 90))
-check('dashboard shows a priced total', /¥0\.13/.test(accountText), accountText.slice(0, 100))
+// 1.00 seeded on an old day + 0.132 priced live, so "all time" and "last 7 days"
+// are different numbers and a view that ignores the window is caught.
+const ALL_TIME_TOTAL = /¥1\.13/
+const WEEK_TOTAL = /¥0\.13/
+check('the account view totals all time by default', ALL_TIME_TOTAL.test(accountText), accountText.slice(0, 100))
+
+/** Press the button whose label matches, as a user would. */
+const pressButton = (tree, label) => {
+  const button = treeNodes(tree).find(node => node.type === 'button'
+    && flatten(node.children).includes(label))
+  if (button === undefined) return false
+  button.props.onClick()
+  return true
+}
 
 /** Every element of a rendered tree, flattened. */
 const treeNodes = node => {
@@ -320,6 +355,15 @@ const headerBands = treeNodes(accountTree)
   .map(node => String(node.props?.style?.background ?? ''))
   .filter(background => background.includes('Canvas 9'))
 check('no grey band sits behind the page header', headerBands.length === 0, headerBands[0] ?? 'none')
+
+// The date axis: both views must narrow to a window, not just the account one.
+check('the account view carries the time switch', pressButton(accountTree, zhStrings.dash7))
+const accountWeekText = flatten(renderSurface(
+  React.createElement(costPanel.component, shellProps), true)).replace(/\s+/g, ' ')
+check('the account view narrows to the last 7 days',
+  WEEK_TOTAL.test(accountWeekText) && accountWeekText.includes(zhStrings.costInRange),
+  accountWeekText.slice(0, 100))
+
 let projectsTree = null
 if (projectsTabButton !== undefined) {
   projectsTabButton.props.onClick()
@@ -328,6 +372,40 @@ if (projectsTabButton !== undefined) {
   check('clicking it switches to the project view',
     projectsText.includes(zhStrings.reportByModel) && !projectsText.includes(zhStrings.dashActivity),
     projectsText.slice(0, 90))
+  check('the project view also totals all time by default',
+    ALL_TIME_TOTAL.test(projectsText), projectsText.slice(0, 100))
+  check('the project view carries the time switch', pressButton(projectsTree, zhStrings.dash7))
+  const projectsWeekText = flatten(renderSurface(
+    React.createElement(costPanel.component, shellProps), true)).replace(/\s+/g, ' ')
+  check('the project view narrows to the last 7 days',
+    WEEK_TOTAL.test(projectsWeekText) && projectsWeekText.includes(zhStrings.costInRange),
+    projectsWeekText.slice(0, 100))
+
+  /* ------------------------------------------------- the project drill-down */
+
+  // The project dimension must be a list you can act on: the ranking rows carry
+  // the same drill-down the account view's bars do, and the donut's legend rows
+  // are targets too — a chart you cannot click is a picture, not a report.
+  const drillRows = treeNodes(projectsTree).filter(node =>
+    node.props?.style?.cursor === 'pointer' && typeof node.props?.onClick === 'function')
+  check('the project view lists clickable project rows', drillRows.length >= 1,
+    `clickable rows=${drillRows.length}`)
+  // Target the real workspace, not the no-project bucket: the fixture's
+  // no-project row outranks it, and the sentinel that makes it clickable is
+  // what this also exercises.
+  const projectRow = drillRows.find(node => flatten(node).includes('md')) ?? drillRows[0]
+  if (projectRow !== undefined) {
+    projectRow.props.onClick()
+    const scopedText = flatten(renderSurface(
+      React.createElement(costPanel.component, shellProps), true)).replace(/\s+/g, ' ')
+    check('clicking a project row drills into that project',
+      scopedText.includes(zhStrings.reportByConversation),
+      scopedText.slice(0, 90))
+  }
+  const noProjectRow = treeNodes(projectsTree).find(node =>
+    node.props?.style?.cursor === 'pointer' && flatten(node).includes(zhStrings.reportNoProject)
+    && typeof node.props?.onClick === 'function')
+  check('the no-project bucket is drillable too', noProjectRow !== undefined)
 
   /* ------------------------------------------------- same module, same shape */
 
@@ -382,8 +460,8 @@ if (projectsTabButton !== undefined) {
     legendBlocks(accountTree) >= 1 && legendBlocks(projectsTree) >= 2,
     `bounded legend blocks: account=${legendBlocks(accountTree)} projects=${legendBlocks(projectsTree)}`)
   check('both views state their cost basis',
-    accountTextNow.includes(zhStrings.costInRange) && projectsTextNow.includes(zhStrings.costAllTime),
-    `${zhStrings.costInRange} / ${zhStrings.costAllTime}`)
+    accountTextNow.includes(zhStrings.costAllTime) && projectsTextNow.includes(zhStrings.costAllTime),
+    `${zhStrings.costAllTime}`)
 }
 
 const settingsEntry = registrations.find(item => item.spec?.name === 'settings.section')

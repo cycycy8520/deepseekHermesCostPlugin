@@ -345,6 +345,7 @@ window.__ModuleLoader__.load({
       reportNoProject: '未归入项目',
       panelTitle: '花费统计',
       costAllTime: '花费为全时段',
+      reportDrill: '点击下钻',
       costInRange: '花费为所选时间范围',
       dashTitle: '账号花费',
       dashBack: '返回全部项目',
@@ -474,6 +475,7 @@ window.__ModuleLoader__.load({
       reportNoProject: 'No project',
       panelTitle: 'Spend',
       costAllTime: 'Cost is all-time',
+      reportDrill: 'Click to drill down',
       costInRange: 'Cost is within the selected range',
       dashTitle: 'Account spend',
       dashBack: 'Back to all projects',
@@ -1439,7 +1441,7 @@ window.__ModuleLoader__.load({
             }))
             .filter(group => group.ids.length > 0)
             .sort((a, b) => b.ids.length - a.ids.length)
-          const selectedProject = projects.find(group => group.workspaceId === projectCwd)
+          const selectedProject = projects.find(group => group.workspaceId === (projectCwd === NO_PROJECT ? '' : projectCwd))
           const pickedIds = Object.keys(picked).filter(id => picked[id] === true)
           // The picker renders a bounded, searchable slice: at a few thousand
           // conversations an unbounded checkbox list is both slow and unusable.
@@ -1649,7 +1651,7 @@ window.__ModuleLoader__.load({
               },
                 h('option', { value: '', style: OPTION }, t('backfillPick')),
                 ...projects.map(group => h('option', {
-                  key: group.workspaceId || 'none', value: group.workspaceId, style: OPTION,
+                  key: group.workspaceId || 'none', value: group.workspaceId === '' ? NO_PROJECT : group.workspaceId, style: OPTION,
                 }, `${group.label} · ${group.ids.length}`)),
               ),
 
@@ -1716,7 +1718,15 @@ window.__ModuleLoader__.load({
         /** Slices beyond this are folded into one "other" wedge. */
         const PIE_SLICES = 6
         /** Conversations per detail page. */
-        const REPORT_PAGE = 15
+        /**
+     * Scope value for the rows that belong to no workspace.
+     *
+     * An empty scope means "every project", so the no-project rows need a value
+     * of their own: they used to share the empty one, which made their ranking
+     * row and their dropdown entry do nothing at all when picked.
+     */
+    const NO_PROJECT = 'no-project'
+    const REPORT_PAGE = 15
         /** Side-by-side chart groups only pair up when the column is wide enough. */
         const REPORT_COLUMN = '1 1 400px'
 
@@ -1747,12 +1757,20 @@ window.__ModuleLoader__.load({
          *
          * Swatch and name on the left, then the amount and the share in the same
          * two right-hand columns the bars use, so a donut and a bar list can sit
-         * side by side without the numbers jumping.
-         * @param props - `{ color, label, text, share, dim }`.
+         * side by side without the numbers jumping. `onSelect` turns the row into
+         * a drill-down, which is how a chart stops being a dead picture.
+         * @param props - `{ color, label, text, share, dim, onSelect }`.
          */
-        function LegendRow({ color, label, text, share, dim = false }) {
+        function LegendRow({ color, label, text, share, dim = false, onSelect }) {
+          const clickable = typeof onSelect === 'function'
           return h('div', {
-            style: { ...ROW, ...MUTED, marginBottom: 6, ...(dim ? { opacity: 0.55 } : {}) },
+            onClick: clickable ? () => onSelect() : undefined,
+            title: clickable ? `${label} · ${text} ${share ?? ''}`.trim() : undefined,
+            style: {
+              ...ROW, ...MUTED, marginBottom: 6,
+              ...(dim ? { opacity: 0.55 } : {}),
+              ...(clickable ? { cursor: 'pointer' } : {}),
+            },
           },
             h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 8, minWidth: 0 } },
               h('span', {
@@ -1769,6 +1787,88 @@ window.__ModuleLoader__.load({
             h('span', { style: { display: 'inline-flex', gap: 16, alignItems: 'baseline', flex: '0 0 auto' } },
               h('span', { style: NUMBER }, text),
               share === undefined ? null : h('span', { style: SHARE }, share)),
+          )
+        }
+
+        /**
+         * The time window a view is showing.
+         *
+         * `'all'` has no cutoff; the rest are day offsets, matched against the
+         * Beijing day keys the ledger already stores, because a window that
+         * cannot be placed on the calendar cannot be priced.
+         * @param range - `'all' | '30' | '7'`.
+         * @returns the inclusive first day key, or '' for all time.
+         */
+        function cutoffOf(range) {
+          if (range === 'all') return ''
+          const days = Number(range)
+          return dayKey(Date.now() - (days - 1) * 86400000)
+        }
+
+        /**
+         * Read one ledger row inside a date window.
+         *
+         * The per-day map is the only part of a row that can be sliced by date, so
+         * a windowed read sums it; with no cutoff the row's own cumulative totals
+         * are authoritative. Timing counters are all-time by nature and stay on
+         * the row.
+         * @param row - one ledger row.
+         * @param cutoff - inclusive first day key, or ''.
+         * @returns `{ cost, credits, tokens, byBucket }` for that window.
+         */
+        function sumRange(row, cutoff) {
+          if (cutoff === '') {
+            return {
+              cost: row.cost, credits: row.credits, tokens: totalOf(row.charged), byBucket: row.byBucket,
+            }
+          }
+          let cost = 0
+          let credits = 0
+          let tokens = 0
+          const byBucket = zeroBuckets()
+          for (const [day, cell] of Object.entries(row.byDay)) {
+            if (day < cutoff) continue
+            cost += cell.cost
+            credits += cell.credits
+            tokens += cell.tokens
+            for (const key of BUCKETS) byBucket[key] += cell.byBucket?.[key] ?? 0
+          }
+          return { cost, credits, tokens, byBucket }
+        }
+
+        /**
+         * One toggle chip: the plugin's only "button that is on or off" look.
+         * @param props - `{ active, label, onClick, title }`.
+         */
+        function Chip({ active, label, onClick, title }) {
+          return h('button', {
+            type: 'button',
+            title,
+            'aria-pressed': active,
+            onClick,
+            style: {
+              ...BUTTON,
+              padding: '3px 10px',
+              fontSize: size(13),
+              background: active ? 'color-mix(in srgb, currentColor 16%, transparent)' : 'transparent',
+              fontWeight: active ? 600 : 400,
+            },
+          }, label)
+        }
+
+        /**
+         * The time-window switch both views carry.
+         *
+         * A spend report without a date axis answers "how much ever", which is the
+         * least useful question a bill can be asked; the account view had the
+         * switch and the project view did not, so the same filter is rendered by
+         * both from here.
+         * @param props - `{ value, onChange }`.
+         */
+        function RangeChips({ value, onChange }) {
+          return h('div', { style: { display: 'flex', gap: 4 } },
+            ...[['all', t('dashAllTime')], ['30', t('dash30')], ['7', t('dash7')]].map(([key, label]) =>
+              h(Chip, { key, active: value === key, label, onClick: () => onChange(key) })),
           )
         }
 
@@ -1814,9 +1914,10 @@ window.__ModuleLoader__.load({
          * screen away from the labels they belong to — the numbers stop reading as
          * part of their row. `flex: 0 1 340px` keeps the pair together and still
          * wraps under the chart on a narrow panel.
-         * @param props - `{ slices, money }`; a zero slice is dimmed, never dropped.
+         * @param props - `{ slices, money, onSelect }`; a zero slice is dimmed,
+         * never dropped. `onSelect(slice)` makes every row a drill-down target.
          */
-        function Legend({ slices, money }) {
+        function Legend({ slices, money, onSelect }) {
           const total = slices.reduce((sum, slice) => sum + slice.value, 0)
           const share = value => (total > 0 ? `${(value / total * 100).toFixed(1)}%` : '—')
           return h('div', { style: { flex: '0 1 340px', minWidth: 0 } },
@@ -1827,6 +1928,7 @@ window.__ModuleLoader__.load({
               text: money(slice.value),
               share: share(slice.value),
               dim: !(slice.value > 0),
+              onSelect: onSelect === undefined ? undefined : () => onSelect(slice),
             })),
           )
         }
@@ -1992,6 +2094,7 @@ window.__ModuleLoader__.load({
           const byId = useSessionSel(selectById)
           const items = useWorkspaceSel(selectItems)
           const [scope, setScope] = React.useState('')
+          const [range, setRange] = React.useState('all')
           const [page, setPage] = React.useState(0)
           void version
           if (config === null) return h(NotReady, null)
@@ -2018,8 +2121,13 @@ window.__ModuleLoader__.load({
           // Only conversations that actually carry a figure; a baselined row
           // that never ran is noise in every chart.
           const all = []
+          const cutoff = cutoffOf(range)
           for (const [id, row] of ledger) {
-            if (row.cost === 0 && row.credits === 0 && totalOf(row.charged) === 0) continue
+            // Every figure on this view is read through the same window, so the
+            // charts, the ranking and the detail table cannot disagree about what
+            // "spend" means while a date filter is on.
+            const windowed = sumRange(row, cutoff)
+            if (windowed.cost === 0 && windowed.credits === 0 && windowed.tokens === 0) continue
             // The timing counters ride along so the shared detail table can show
             // its duration column on this view too; they are not sliceable by
             // date, which is why they stay all-time figures.
@@ -2028,10 +2136,10 @@ window.__ModuleLoader__.load({
               id,
               workspaceId: ownerOf.get(id)?.workspaceId ?? '',
               title: labelOf(id),
-              cost: row.cost,
-              credits: row.credits,
-              tokens: totalOf(row.charged),
-              byBucket: row.byBucket,
+              cost: windowed.cost,
+              credits: windowed.credits,
+              tokens: windowed.tokens,
+              byBucket: windowed.byBucket,
               hasStats: stats !== undefined,
               llmMs: stats?.llmMs ?? 0,
               toolMs: stats?.toolMs ?? 0,
@@ -2040,7 +2148,7 @@ window.__ModuleLoader__.load({
                 : [],
             })
           }
-          const rows = scope === '' ? all : all.filter(row => row.workspaceId === scope)
+          const rows = scope === '' ? all : all.filter(row => row.workspaceId === (scope === NO_PROJECT ? '' : scope))
 
           const sumBy = (list, pick) => list.reduce((sum, row) => sum + pick(row), 0)
           const totalCost = sumBy(rows, row => row.cost)
@@ -2063,8 +2171,10 @@ window.__ModuleLoader__.load({
           const pieByProject = scope === ''
           const pieSlices = topWithOther(
             pieByProject
-              ? projects.map(group => ({ label: projectLabel(group.workspaceId), value: group.value }))
-              : rows.map(row => ({ label: row.title, value: row.cost })),
+              ? projects.map(group => ({
+                label: projectLabel(group.workspaceId), value: group.value, id: group.workspaceId,
+              }))
+              : rows.map(row => ({ label: row.title, value: row.cost, id: row.id })),
             PIE_SLICES,
           ).map((slice, index) => ({ ...slice, color: SERIES[index % SERIES.length] }))
 
@@ -2100,18 +2210,27 @@ window.__ModuleLoader__.load({
           }
 
           const body = h(React.Fragment, null,
-            h('div', { style: { ...MUTED, marginBottom: 12, display: 'flex', alignItems: 'center', gap: 8 } },
-              t('reportScope'),
-              h('select', {
-                style: { ...SELECT, width: 'min(300px, 100%)' },
-                value: scope,
-                onChange: event => { setScope(event.target.value); setPage(0) },
+            // ---- filters: the same two dimensions the account view offers
+            h('div', {
+              style: {
+                display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap', marginBottom: 14,
               },
-                h('option', { value: '', style: OPTION }, `${t('reportAllProjects')}（${all.length}）`),
-                ...projects.map(group => h('option', {
-                  key: group.workspaceId || 'none', value: group.workspaceId, style: OPTION,
-                }, `${projectLabel(group.workspaceId)} · ${group.count}`)),
+            },
+              h('span', { style: { ...MUTED, display: 'inline-flex', alignItems: 'center', gap: 8 } },
+                t('reportScope'),
+                h('select', {
+                  style: { ...SELECT, width: 'min(300px, 100%)' },
+                  value: scope,
+                  onChange: event => { setScope(event.target.value); setPage(0) },
+                },
+                  h('option', { value: '', style: OPTION }, `${t('reportAllProjects')}（${all.length}）`),
+                  ...projects.map(group => h('option', {
+                    key: group.workspaceId || 'none', value: group.workspaceId === '' ? NO_PROJECT : group.workspaceId, style: OPTION,
+                  }, `${projectLabel(group.workspaceId)} · ${group.count}`)),
+                ),
               ),
+              h('span', { style: { flex: 1 } }),
+              h(RangeChips, { value: range, onChange: next => { setRange(next); setPage(0) } }),
             ),
 
             h(StatRow, {
@@ -2126,40 +2245,72 @@ window.__ModuleLoader__.load({
               ],
             }),
 
-            h(Composition, {
-              title: t('reportByBucket'),
-              slices: buckets.map(entry => ({ label: t(entry.key), value: entry.value, color: entry.color })),
-              money,
-              empty: t('reportEmpty'),
-              style: { marginBottom: 14 },
-            }),
+            // ---- composition beside the model ranking: two half-width groups
+            // rather than one full-width row with an empty right half
+            h('div', { style: { display: 'flex', gap: 14, flexWrap: 'wrap' } },
+              h(Composition, {
+                title: t('reportByBucket'),
+                slices: buckets.map(entry => ({ label: t(entry.key), value: entry.value, color: entry.color })),
+                money,
+                empty: t('reportEmpty'),
+                style: { flex: REPORT_COLUMN, minWidth: 0, marginBottom: 14 },
+              }),
+              h('div', { style: { ...GROUP, flex: REPORT_COLUMN, minWidth: 0 } },
+                h('div', { style: { fontWeight: 600, marginBottom: 10 } }, t('reportByModel')),
+                models.length === 0 && h('div', { style: FAINTED }, '—'),
+                ...models.slice(0, 8).map((entry, index) => h(Bar, {
+                  key: entry.label,
+                  label: entry.label,
+                  value: entry.value,
+                  max: modelMax,
+                  color: SERIES[index % SERIES.length],
+                  text: money(entry.value),
+                  share: share(entry.value),
+                })),
+              ),
+            ),
 
-              h('div', { style: { display: 'flex', gap: 14, flexWrap: 'wrap' } },
-                h('div', { style: { ...GROUP, flex: REPORT_COLUMN } },
-                  h('div', { style: { fontWeight: 600, marginBottom: 10 } },
-                    pieByProject ? t('reportByProject') : t('reportByConversation')),
-                  h('div', {
-                    style: { display: 'flex', gap: 22, alignItems: 'center', flexWrap: 'wrap', maxWidth: 620 },
-                  },
-                    h(Pie, { slices: pieSlices, size: 168 }),
-                    h(Legend, { slices: pieSlices, money }),
-                  ),
-                ),
-
-                h('div', { style: { ...GROUP, flex: REPORT_COLUMN } },
-                  h('div', { style: { fontWeight: 600, marginBottom: 10 } }, t('reportByModel')),
-                  models.length === 0 && h('div', { style: FAINTED }, '—'),
-                  ...models.slice(0, 8).map((entry, index) => h(Bar, {
-                    key: entry.label,
-                    label: entry.label,
-                    value: entry.value,
-                    max: modelMax,
-                    color: SERIES[index % SERIES.length],
-                    text: money(entry.value),
-                    share: share(entry.value),
-                  })),
+            // ---- the project dimension, both halves of it: the share a donut
+            // states and the ranking a list states, each row a drill-down
+            h('div', { style: { display: 'flex', gap: 14, flexWrap: 'wrap' } },
+              h('div', { style: { ...GROUP, flex: REPORT_COLUMN, minWidth: 0 } },
+                h('div', { style: { fontWeight: 600, marginBottom: 10 } },
+                  pieByProject ? t('reportByProject') : t('reportByConversation')),
+                h('div', {
+                  style: { display: 'flex', gap: 22, alignItems: 'center', flexWrap: 'wrap', maxWidth: 620 },
+                },
+                  h(Pie, { slices: pieSlices, size: 168 }),
+                  h(Legend, {
+                    slices: pieSlices,
+                    money,
+                    onSelect: pieByProject
+                      ? slice => { if (slice.id !== undefined) { setScope(slice.id === '' ? NO_PROJECT : slice.id); setPage(0) } }
+                      : undefined,
+                  }),
                 ),
               ),
+
+              h('div', { style: { ...GROUP, flex: REPORT_COLUMN, minWidth: 0 } },
+                h('div', { style: { fontWeight: 600, marginBottom: 10 } }, t('dashByProject')),
+                projects.length === 0 && h('div', { style: FAINTED }, '—'),
+                ...projects.slice(0, 8).map((group, index) => h('div', {
+                  key: group.workspaceId || 'none',
+                  title: `${projectLabel(group.workspaceId)} · ${t('reportDrill')}`,
+                  style: { marginBottom: 4, cursor: 'pointer' },
+                  onClick: () => { setScope(group.workspaceId === '' ? NO_PROJECT : group.workspaceId); setPage(0) },
+                },
+                  h(Bar, {
+                    label: projectLabel(group.workspaceId),
+                    value: group.value,
+                    max: projects[0].value,
+                    color: SERIES[index % SERIES.length],
+                    text: money(group.value),
+                    share: share(group.value),
+                  }),
+                )),
+                reportsNote(projects.length > 8, projects.length - 8),
+              ),
+            ),
 
             h(ConversationTable, {
               rows: pageRows,
@@ -2167,7 +2318,7 @@ window.__ModuleLoader__.load({
               page: current,
               pageCount,
               onPage: setPage,
-              costNote: t('costAllTime'),
+              costNote: range === 'all' ? t('costAllTime') : t('costInRange'),
               money,
               projectOf: projectLabel,
             }),
@@ -2387,7 +2538,7 @@ window.__ModuleLoader__.load({
               decodeTokens: stats?.decodeTokens ?? 0,
             })
           }
-          const scoped = scope === '' ? all : all.filter(row => row.workspaceId === scope)
+          const scoped = scope === '' ? all : all.filter(row => row.workspaceId === (scope === NO_PROJECT ? '' : scope))
 
           // Date filter. Only the per-day map can be sliced, so timing and
           // conversation counts fall back to all-time and say so.
@@ -2556,15 +2707,11 @@ window.__ModuleLoader__.load({
               },
                 h('option', { value: '', style: OPTION }, `${t('reportAllProjects')}（${all.length}）`),
                 ...projects.map(group => h('option', {
-                  key: group.workspaceId || 'none', value: group.workspaceId, style: OPTION,
+                  key: group.workspaceId || 'none', value: group.workspaceId === '' ? NO_PROJECT : group.workspaceId, style: OPTION,
                 }, `${projectTitle(group.workspaceId)} · ${group.count}`)),
               ),
               h('span', { style: { flex: 1 } }),
-              h('div', { style: { display: 'flex', gap: 4 } },
-                chip(range === 'all', t('dashAllTime'), () => { setRange('all'); setPage(0) }),
-                chip(range === '30', t('dash30'), () => { setRange('30'); setPage(0) }),
-                chip(range === '7', t('dash7'), () => { setRange('7'); setPage(0) }),
-              ),
+              h(RangeChips, { value: range, onChange: next => { setRange(next); setPage(0) } }),
             ),
 
             // ---- statistic cards (rule 1: three questions above the fold)
@@ -2655,7 +2802,7 @@ window.__ModuleLoader__.load({
                 ...projects.slice(0, 8).map((group, index) => h('div', {
                   key: group.workspaceId || 'none',
                   style: { marginBottom: 4, cursor: 'pointer' },
-                  onClick: () => { setScope(group.workspaceId); setPage(0) },
+                  onClick: () => { setScope(group.workspaceId === '' ? NO_PROJECT : group.workspaceId); setPage(0) },
                 },
                   h(Bar, {
                     label: projectTitle(group.workspaceId),
@@ -2677,7 +2824,7 @@ window.__ModuleLoader__.load({
               page: current,
               pageCount,
               onPage: setPage,
-              costNote: t('costInRange'),
+              costNote: range === 'all' ? t('costAllTime') : t('costInRange'),
               money,
               projectOf: projectTitle,
             }),
