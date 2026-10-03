@@ -2623,34 +2623,39 @@ window.__ModuleLoader__.load({
         }
 
         /**
-         * The panel's view switch.
+         * The panel's view switch: two large tabs.
          *
-         * A segmented control rather than a row of links: the two views are peers
-         * of one entry, and the active one has to be obvious at a glance.
+         * Sized as page-level navigation rather than as a filter chip — these
+         * switch the whole page, so they sit on their own full-width row under
+         * the title, marked by an underline on the active one. No fills: a grey
+         * plane behind a title reads as chrome nobody asked for, and the bar's own
+         * hairline is the only line this switch needs.
          * @param props - `{ value, options, onChange }`; options are `{ value, label }`.
          */
         function Tabs({ value, options, onChange }) {
           return h('div', {
-            style: {
-              display: 'inline-flex', gap: 2, padding: 2, borderRadius: 9,
-              border: `1px solid ${hairline}`,
-              background: 'color-mix(in srgb, currentColor 6%, transparent)',
-            },
-          }, ...options.map(option => h('button', {
-            key: option.value,
-            type: 'button',
-            'aria-pressed': option.value === value,
-            onClick: () => onChange(option.value),
-            style: {
-              ...BUTTON,
-              border: 'none',
-              padding: '3px 14px',
-              background: option.value === value
-                ? 'color-mix(in srgb, currentColor 16%, transparent)'
-                : 'transparent',
-              fontWeight: option.value === value ? 600 : 400,
-            },
-          }, option.label)))
+            style: { display: 'flex', gap: 4, borderBottom: `1px solid ${hairline}` },
+          }, ...options.map(option => {
+            const active = option.value === value
+            return h('button', {
+              key: option.value,
+              type: 'button',
+              'aria-pressed': active,
+              onClick: () => onChange(option.value),
+              style: {
+                ...BUTTON,
+                padding: '10px 26px',
+                fontSize: size(16),
+                fontWeight: active ? 600 : 500,
+                color: active ? 'inherit' : SOFT,
+                border: 'none',
+                background: 'transparent',
+                borderRadius: 0,
+                borderBottom: `2px solid ${active ? 'currentColor' : 'transparent'}`,
+                marginBottom: -1,
+              },
+            }, option.label)
+          }))
         }
 
         /**
@@ -2658,24 +2663,16 @@ window.__ModuleLoader__.load({
          *
          * Both views answer the same question from different angles, so they share
          * one sidebar entry and one page header; account spend is the default
-         * because "what have I spent" is the question a spender arrives with.
-         * Only the visible view is mounted: the header is state, the views are not.
+         * because "what have I spent" is the question a spender arrives with. The
+         * header is plain type on the page background — no band, no fill — and only
+         * the visible view is mounted.
          * @param props - the slot host's shares, forwarded to the active view.
          */
         function CostPanel(props) {
           const [tab, setTab] = React.useState('account')
           return h('div', { style: PAGE },
-            h('div', {
-              style: {
-                position: 'sticky', top: 0, zIndex: 5,
-                display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
-                padding: '0 0 10px', marginBottom: 14,
-                background: 'color-mix(in srgb, Canvas 96%, CanvasText)',
-                borderBottom: `1px solid ${hairline}`,
-              },
-            },
-              h('span', { style: { fontSize: size(16), fontWeight: 600 } }, t('panelTitle')),
-              h('span', { style: { flex: 1 } }),
+            h('div', { style: { marginBottom: 14 } },
+              h('div', { style: { fontSize: size(17), fontWeight: 600, marginBottom: 10 } }, t('panelTitle')),
               h(Tabs, {
                 value: tab,
                 onChange: setTab,

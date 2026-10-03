@@ -298,6 +298,28 @@ const treeNodes = node => {
 const projectsTabButton = treeNodes(accountTree).find(node => node.type === 'button'
   && flatten(node.children).includes(projectsTab))
 check('the projects tab is a real button', projectsTabButton !== undefined)
+// Primary navigation must not be the smallest control on the page: this was a
+// chip-sized segmented control and read as a filter instead of a view switch.
+const tabStyle = projectsTabButton?.props?.style ?? {}
+const tabFont = /calc\((\d+(?:\.\d+)?)px/.exec(String(tabStyle.fontSize ?? ''))
+check('the view tabs are page-sized, not chips',
+  String(tabStyle.padding) === '10px 26px' && Number(tabFont?.[1] ?? 0) >= 15,
+  `padding=${tabStyle.padding} fontSize=${tabFont?.[1]}px`)
+
+// A grey plane behind the title (and behind the selected tab) is chrome nobody
+// asked for, and it is the one thing the reader noticed first. Both are gone;
+// the floating composer dialog keeps its own opaque surface, which this does not
+// cover because it is not part of the page header.
+const accountTabButton = treeNodes(accountTree).find(node => node.type === 'button'
+  && flatten(node.children).includes(accountTab))
+check('neither view tab carries a fill',
+  String(tabStyle.background) === 'transparent'
+    && String(accountTabButton?.props?.style?.background) === 'transparent',
+  `idle=${tabStyle.background} active=${accountTabButton?.props?.style?.background}`)
+const headerBands = treeNodes(accountTree)
+  .map(node => String(node.props?.style?.background ?? ''))
+  .filter(background => background.includes('Canvas 9'))
+check('no grey band sits behind the page header', headerBands.length === 0, headerBands[0] ?? 'none')
 if (projectsTabButton !== undefined) {
   projectsTabButton.props.onClick()
   const projectsText = flatten(renderSurface(
