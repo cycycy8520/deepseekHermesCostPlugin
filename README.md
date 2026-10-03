@@ -127,7 +127,11 @@ dsh plugin add https://github.com/cycycy8520/deepseekHermesCostPlugin
 
 **`-0` 不是笔误。** semver 的 `>=0.1.0` **不匹配预发布版本**（如 `0.1.6-alpha.2`），除非区间自身带预发布标识。`>=0.1.0-0` 才是"0.1.0 及以后、含预发布"的正确写法。当前版本没有校验 `engines`，但将来若开始校验，写错的区间会**直接挡住安装**。
 
-插件在 **0.1.6-alpha.2** 上完整验证过；更早的版本没有验证。如果某项功能在你的版本上不可用，见下一节。
+**验证过的版本：`0.2.0-rc.2`。**
+
+**为什么必须 0.2 以上**：0.2 把 `ctx.settings` 换成了 `SettingsForms`（只剩 `describe/update/configure/documentPath/writable`），**`ctx.settings.register(ns, schema)` 不再存在**。本插件原先把账本与价表存在那个命名空间里，在 0.2 上会抛错并被自身的 `try/catch` 吞掉 —— 表现就是「客户端半边照常加载、侧栏有条目，但页面取不到数据」。现已改为**插件自有的存储**：`$DSH_HOME/dsh-cost-meter/state.json`，并通过 `ctx.inject(['connection'])` 注册 `/api/cost/state`、`/api/cost/config`、`/api/cost/backfill` 路由供客户端读取。
+
+**0.1.x 未验证**：早期版本里有 `settings.register`，但本插件现在依赖的连接路由载体（`connection.fetch.register` / `sessionQuery.readSession`）是否可用没有测过。要在 0.1.x 上用，先确认这两点。
 
 ---
 
