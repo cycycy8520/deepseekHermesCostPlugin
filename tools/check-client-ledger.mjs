@@ -308,12 +308,47 @@ check('text sizes derive from the theme content size',
 check('no hard-coded font-size survives',
   !/fontSize":\d/.test(markup) && !/font-size:\s*\d/.test(markup),
   (markup.match(/fontSize":\d[^,]*/g) ?? []).slice(0, 2).join(' | '))
-check('pages fill the column instead of a fixed cap',
-  !markup.includes('1180') && markup.includes('"width":"100%"'),
-  markup.includes('1180') ? 'still capped at 1180px' : 'fluid')
 check('price table stretches with a readable floor',
   markup.includes('TABLE_MIN_WIDTH') === false && markup.includes('820'),
   markup.includes('820') ? 'min-width 820px + percentage columns' : 'no floor found')
+
+// Walk the rendered trees: sizing regressions are invisible in text assertions,
+// and "the reader cannot read it" is a sizing claim.
+const nodes = surfaces.flatMap(([, tree]) => {
+  const walk = node => {
+    if (node === null || node === undefined || typeof node !== 'object') return []
+    if (Array.isArray(node)) return node.flatMap(walk)
+    return [node, ...walk(node.children ?? [])]
+  }
+  return walk(tree)
+})
+const styles = nodes.map(node => node.props?.style ?? {}).filter(style => typeof style === 'object')
+const fontSizes = styles
+  .map(style => /calc\((\d+(?:\.\d+)?)px/.exec(String(style.fontSize ?? '')))
+  .filter(Boolean)
+  .map(match => Number(match[1]))
+
+check('nothing renders below 12px at the default size',
+  fontSizes.length > 0 && Math.min(...fontSizes) >= 12,
+  `min=${Math.min(...fontSizes)}px across ${fontSizes.length} sizes`)
+check('headline figures stay large', Math.max(...fontSizes) >= 30, `max=${Math.max(...fontSizes)}px`)
+check('heatmap cells are enlarged',
+  Math.max(...nodes.filter(node => node.type === 'rect').map(node => Number(node.props?.width ?? 0))) >= 16,
+  `cell=${Math.max(...nodes.filter(node => node.type === 'rect').map(node => Number(node.props?.width ?? 0)))}px`)
+check('the page insets on a wide window',
+  styles.some(style => style.width === '100%' && Number(style.maxWidth) >= 1200 && Number(style.maxWidth) <= 1800),
+  `max-width=${styles.map(style => style.maxWidth).filter(Boolean).join(',') || 'none'}`)
+
+const rightAligned = styles
+  .filter(style => style.textAlign === 'right' && Number.isFinite(style.minWidth))
+  .map(style => style.minWidth)
+check('money and share own separate right-aligned columns',
+  rightAligned.filter(width => width >= 50).length >= 2, `columns=${[...new Set(rightAligned)].join(',')}`)
+
+const donuts = nodes.filter(node => node.type === 'svg').length
+const legendRows = styles.filter(style => style.width === 11 && style.borderRadius === 3).length
+check('billing composition is a donut with a legend',
+  donuts >= 2 && legendRows >= 3, `donuts=${donuts} legend rows=${legendRows}`)
 
 const failed = results.filter(ok => ok !== true).length
 console.log(`\n${results.length - failed}/${results.length} checks passed`)

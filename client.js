@@ -209,17 +209,22 @@ window.__ModuleLoader__.load({
      * that default, and every native surface derives its own sizes from them.
      * Hard-coded pixels would pin this meter at one size while the rest of the
      * app tracks the setting, so each size below is the number the design was
-     * drawn at PLUS that same delta: `size(11)` is 11px at the default and stays
+     * drawn at PLUS that same delta: `size(13)` is 13px at the default and stays
      * proportionate at any other.
      */
     const size = px => `calc(${px}px + var(--dsh-content-font-delta, 0px))`
     /**
-     * The page fills the column the harness gives it.
+     * The page follows the column the harness gives it, within a readable width.
      *
-     * A centered `max-width` reads as a fixed-resolution panel on a wide window
-     * and leaves most of it empty; the gutter is the only width this file owns.
+     * No cap at all stretches a two-column dashboard across an ultrawide window
+     * until every bar is a metre long; a pixel cap alone ignores the window. A
+     * `max-width` does both: the rows stop growing once they are comfortable and
+     * the gutter takes the rest.
      */
-    const PAGE = { padding: '18px 24px 40px', width: '100%', boxSizing: 'border-box' }
+    const PAGE = {
+      padding: '22px 32px 46px', width: '100%', maxWidth: 1440, margin: '0 auto',
+      boxSizing: 'border-box',
+    }
 
     const hairline = 'color-mix(in srgb, currentColor 16%, transparent)'
     const SOFT = 'color-mix(in srgb, currentColor 55%, transparent)'
@@ -228,21 +233,24 @@ window.__ModuleLoader__.load({
       display: 'inline-flex', alignItems: 'center', gap: 6, padding: '3px 9px',
       border: `1px solid ${hairline}`, borderRadius: 999,
       background: 'color-mix(in srgb, currentColor 7%, transparent)',
-      color: 'inherit', font: 'inherit', fontSize: size(12), lineHeight: 1.5, cursor: 'pointer',
+      color: 'inherit', font: 'inherit', fontSize: size(13), lineHeight: 1.5, cursor: 'pointer',
     }
     const PANEL = {
       position: 'fixed', zIndex: 60, width: 'min(340px, calc(100vw - 32px))', padding: 12,
       border: `1px solid ${hairline}`, borderRadius: 12,
       background: 'color-mix(in srgb, Canvas 92%, CanvasText)',
-      color: 'CanvasText', font: 'inherit', fontSize: size(12), lineHeight: 1.6,
+      color: 'CanvasText', font: 'inherit', fontSize: size(13), lineHeight: 1.6,
       boxShadow: '0 10px 30px rgba(0,0,0,.30)',
     }
     const ROW = { display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'baseline' }
-    const MUTED = { color: SOFT, fontSize: size(11) }
-    const FAINTED = { color: FAINT, fontSize: size(10.5) }
+    const MUTED = { color: SOFT, fontSize: size(12.5) }
+    const FAINTED = { color: FAINT, fontSize: size(12) }
+    /** Money and share own separate right-aligned columns, so rows scan vertically. */
+    const NUMBER = { minWidth: 82, textAlign: 'right', fontWeight: 600, color: 'inherit' }
+    const SHARE = { minWidth: 56, textAlign: 'right', color: FAINT, fontSize: size(12) }
     const RULE = { height: 1, background: hairline, margin: '8px 0' }
     const WARN = { color: '#d29343' }
-    const SECTION_TITLE = { fontSize: size(13), fontWeight: 600, margin: '0 0 8px' }
+    const SECTION_TITLE = { fontSize: size(15), fontWeight: 600, margin: '0 0 8px' }
     const GROUP = {
       border: `1px solid ${hairline}`, borderRadius: 10, padding: 12, marginBottom: 14,
     }
@@ -250,11 +258,11 @@ window.__ModuleLoader__.load({
       width: '100%', boxSizing: 'border-box', padding: '3px 6px',
       border: `1px solid ${hairline}`, borderRadius: 6,
       background: 'color-mix(in srgb, currentColor 5%, transparent)',
-      color: 'inherit', font: 'inherit', fontSize: size(11.5),
+      color: 'inherit', font: 'inherit', fontSize: size(13),
     }
     const TH = {
       textAlign: 'left', padding: '2px 5px', fontWeight: 500, color: SOFT,
-      fontSize: size(10.5), whiteSpace: 'nowrap',
+      fontSize: size(12), whiteSpace: 'nowrap',
     }
     // A native select popup is drawn by the OS, not the page: it inherits none
     // of the page's colours and renders light regardless of the app theme,
@@ -272,7 +280,7 @@ window.__ModuleLoader__.load({
     const BUTTON = {
       padding: '4px 12px', border: `1px solid ${hairline}`, borderRadius: 8,
       background: 'color-mix(in srgb, currentColor 8%, transparent)',
-      color: 'inherit', font: 'inherit', fontSize: size(12), cursor: 'pointer',
+      color: 'inherit', font: 'inherit', fontSize: size(13), cursor: 'pointer',
     }
     const COLUMNS = ['match', 'from', 'to', 'cacheHit', 'cacheMiss', 'cacheWrite', 'output', 'currency']
     /**
@@ -975,7 +983,7 @@ window.__ModuleLoader__.load({
             }, notReadyTitle()),
             h('div', { style: { ...FAINTED, marginTop: 8, lineHeight: 1.75 } }, notReadyHint()),
             readinessDetail === '' ? null
-              : h('div', { style: { ...FAINTED, marginTop: 6, fontFamily: 'ui-monospace, monospace', fontSize: size(11) } },
+              : h('div', { style: { ...FAINTED, marginTop: 6, fontFamily: 'ui-monospace, monospace', fontSize: size(12) } },
                 readinessDetail),
             h('button', {
               type: 'button', style: { ...PILL, marginTop: 14 }, onClick: retry,
@@ -1160,7 +1168,7 @@ window.__ModuleLoader__.load({
             },
               h('span', { style: { fontWeight: 700, opacity: 0.85 } }, symbol.trim() || 'cr'),
               h('span', null, label.slice((symbol.trim() || 'cr').length)),
-              entry.unpriced > 0 && h('span', { style: { ...WARN, fontSize: size(10) } }, '•'),
+              entry.unpriced > 0 && h('span', { style: { ...WARN, fontSize: size(12) } }, '•'),
             ),
             open && (ReactDOM?.createPortal !== undefined
               ? ReactDOM.createPortal(panel, document.body)
@@ -1560,7 +1568,7 @@ window.__ModuleLoader__.load({
                         width: 22, height: 22, padding: 0, lineHeight: 1,
                         border: `1px solid ${hairline}`, borderRadius: 6,
                         background: 'transparent', color: SOFT,
-                        font: 'inherit', fontSize: size(14), cursor: 'pointer',
+                        font: 'inherit', fontSize: size(15), cursor: 'pointer',
                       },
                       onClick: () => {
                         setDraft(current => ({
@@ -1709,20 +1717,79 @@ window.__ModuleLoader__.load({
         /** One horizontal bar: a filled div, so no chart library is needed. */
         function Bar({ label, value, max, color, text, share }) {
           const width = max > 0 ? Math.max(value / max * 100, value > 0 ? 0.5 : 0) : 0
-          return h('div', { style: { marginBottom: 7 } },
-            h('div', { style: { ...ROW, ...MUTED, marginBottom: 2 } },
+          return h('div', { style: { marginBottom: 9 } },
+            h('div', { style: { ...ROW, ...MUTED, marginBottom: 3 } },
               h('span', { style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, label),
               // The figure is what the reader came for; emphasis belongs here,
-              // never on a footnote about missing data.
-              h('span', { style: { fontWeight: 600, color: 'inherit' } },
-                `${text}${share === undefined ? '' : ` · ${share}`}`),
+              // never on a footnote about missing data. Money and share keep
+              // separate columns so the two never read as one number.
+              h('span', { style: { display: 'inline-flex', gap: 16, alignItems: 'baseline', flex: '0 0 auto' } },
+                h('span', { style: NUMBER }, text),
+                share === undefined ? null : h('span', { style: SHARE }, share)),
             ),
             h('div', {
               style: {
-                height: 8, borderRadius: 4, overflow: 'hidden',
+                height: 10, borderRadius: 5, overflow: 'hidden',
                 background: 'color-mix(in srgb, currentColor 10%, transparent)',
               },
             }, h('div', { style: { width: `${width}%`, height: '100%', background: color } })),
+          )
+        }
+
+        /**
+         * One legend line for a part-to-whole chart.
+         *
+         * Swatch and name on the left, then the amount and the share in the same
+         * two right-hand columns the bars use, so a donut and a bar list can sit
+         * side by side without the numbers jumping.
+         * @param props - `{ color, label, text, share }`.
+         */
+        function LegendRow({ color, label, text, share }) {
+          return h('div', { style: { ...ROW, ...MUTED, marginBottom: 6 } },
+            h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 8, minWidth: 0 } },
+              h('span', {
+                style: {
+                  width: 11, height: 11, borderRadius: 3, background: color,
+                  display: 'inline-block', flex: '0 0 auto',
+                },
+              }),
+              h('span', {
+                style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
+              }, label),
+            ),
+            h('span', { style: { display: 'inline-flex', gap: 16, alignItems: 'baseline', flex: '0 0 auto' } },
+              h('span', { style: NUMBER }, text),
+              share === undefined ? null : h('span', { style: SHARE }, share)),
+          )
+        }
+
+        /**
+         * Part-to-whole composition: a donut with its legend.
+         *
+         * A billing bucket is a share of one total, which is what a donut states
+         * directly; four full-width bars stated it as four lengths the reader had
+         * to compare. Ranking stays on bars — order and magnitude are the point
+         * there, and a many-slice pie would be worse than the list.
+         * @param props - `{ title, slices, money, empty, style }`.
+         */
+        function Composition({ title, slices, money, empty, style }) {
+          const total = slices.reduce((sum, slice) => sum + slice.value, 0)
+          const share = value => (total > 0 ? `${(value / total * 100).toFixed(1)}%` : '—')
+          return h('div', { style: { ...GROUP, ...style } },
+            h('div', { style: { fontWeight: 600, marginBottom: 10 } }, title),
+            total <= 0
+              ? h('div', { style: FAINTED }, empty)
+              : h('div', { style: { display: 'flex', gap: 24, alignItems: 'center', flexWrap: 'wrap' } },
+                h(Pie, { slices, size: 168 }),
+                h('div', { style: { flex: '1 1 240px', minWidth: 0 } },
+                  ...slices.map((slice, index) => h(LegendRow, {
+                    key: String(index),
+                    color: slice.color,
+                    label: slice.label,
+                    text: money(slice.value),
+                    share: share(slice.value),
+                  }))),
+              ),
           )
         }
 
@@ -1731,12 +1798,13 @@ window.__ModuleLoader__.load({
          *
          * A single 100% slice cannot be expressed as an arc (start and end
          * coincide), so that case draws a circle instead of a degenerate path.
+         * @param props - `{ slices, size }`; `size` is the drawn diameter in px.
          */
-        function Pie({ slices }) {
+        function Pie({ slices, size = 150 }) {
           const total = slices.reduce((sum, slice) => sum + slice.value, 0)
           if (!(total > 0)) return null
           if (slices.length === 1) {
-            return h('svg', { viewBox: '0 0 100 100', width: 150, height: 150 },
+            return h('svg', { viewBox: '0 0 100 100', width: size, height: size },
               h('circle', { cx: 50, cy: 50, r: 42, fill: slices[0].color }))
           }
           let angle = -Math.PI / 2
@@ -1755,7 +1823,7 @@ window.__ModuleLoader__.load({
               fill: slice.color,
             }))
           }
-          return h('svg', { viewBox: '0 0 100 100', width: 150, height: 150 }, ...paths)
+          return h('svg', { viewBox: '0 0 100 100', width: size, height: size }, ...paths)
         }
 
         /** Fold a list into at most `limit` named totals plus one remainder row. */
@@ -1851,7 +1919,6 @@ window.__ModuleLoader__.load({
             value: sumBy(rows, row => row.byBucket[key] ?? 0),
             color: SERIES[index % SERIES.length],
           }))
-          const bucketMax = Math.max(0, ...buckets.map(entry => entry.value))
 
           const byModel = new Map()
           for (const row of rows) {
@@ -1872,7 +1939,7 @@ window.__ModuleLoader__.load({
 
           const share = value => (totalCost > 0 ? `${(value / totalCost * 100).toFixed(1)}%` : '—')
           const stat = (value, label) => h('div', { key: label, style: { minWidth: 110 } },
-            h('div', { style: { fontSize: size(18), fontWeight: 600 } }, value),
+            h('div', { style: { fontSize: size(20), fontWeight: 600 } }, value),
             h('div', { style: FAINTED }, label),
           )
           const cell = (content, extra) => h('td', {
@@ -1907,42 +1974,30 @@ window.__ModuleLoader__.load({
               ),
 
               h('div', { style: GROUP },
-                h('div', { style: { fontWeight: 600, marginBottom: 10 } }, t('reportByBucket')),
-                ...buckets.filter(entry => entry.value > 0 || entry.key !== 'cacheWrite').map(entry =>
-                  h(Bar, {
-                    key: entry.key,
-                    label: t(entry.key),
-                    value: entry.value,
-                    max: bucketMax,
-                    color: entry.color,
-                    text: money(entry.value),
-                    share: share(entry.value),
+                h(Composition, {
+                  title: t('reportByBucket'),
+                  slices: buckets.filter(entry => entry.value > 0 || entry.key !== 'cacheWrite').map(entry => ({
+                    label: t(entry.key), value: entry.value, color: entry.color,
                   })),
+                  money,
+                  empty: t('reportEmpty'),
+                }),
               ),
 
               h('div', { style: { display: 'flex', gap: 14, flexWrap: 'wrap' } },
                 h('div', { style: { ...GROUP, flex: REPORT_COLUMN } },
                   h('div', { style: { fontWeight: 600, marginBottom: 10 } },
                     pieByProject ? t('reportByProject') : t('reportByConversation')),
-                  h('div', { style: { display: 'flex', gap: 18, alignItems: 'center', flexWrap: 'wrap' } },
-                    h(Pie, { slices: pieSlices }),
-                    h('div', { style: { flex: '1 1 150px' } },
-                      ...pieSlices.map((slice, index) => h('div', {
-                        key: String(index), style: { ...ROW, ...MUTED, marginBottom: 4 },
-                      },
-                        h('span', { style: { display: 'inline-flex', alignItems: 'center', gap: 6, minWidth: 0 } },
-                          h('span', {
-                            style: {
-                              width: 9, height: 9, borderRadius: 2, background: slice.color,
-                              display: 'inline-block', flex: '0 0 auto',
-                            },
-                          }),
-                          h('span', {
-                            style: { overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' },
-                          }, slice.label),
-                        ),
-                        h('span', { style: { flex: '0 0 auto' } }, `${money(slice.value)} ${share(slice.value)}`),
-                      )),
+                  h('div', { style: { display: 'flex', gap: 22, alignItems: 'center', flexWrap: 'wrap' } },
+                    h(Pie, { slices: pieSlices, size: 168 }),
+                    h('div', { style: { flex: '1 1 240px', minWidth: 0 } },
+                      ...pieSlices.map((slice, index) => h(LegendRow, {
+                        key: String(index),
+                        color: slice.color,
+                        label: slice.label,
+                        text: money(slice.value),
+                        share: share(slice.value),
+                      })),
                     ),
                   ),
                 ),
@@ -2066,8 +2121,10 @@ window.__ModuleLoader__.load({
          * @param props - `{ days, values, size, format, detailOf, onHover }`.
          */
         function ActivityHeatmap({ days, values, size, format, detailOf, onHover }) {
-          const CELL = 12
-          const GAP = 3
+          // Big enough to read a day's value off the grid; a year of weeks still
+          // fits the page's width, and the grid is the dashboard's main chart.
+          const CELL = 16
+          const GAP = 4
           const STEP = CELL + GAP
           if (days.length === 0) return null
           const first = days[0]
@@ -2091,7 +2148,7 @@ window.__ModuleLoader__.load({
               y: row * STEP,
               width: CELL,
               height: CELL,
-              rx: 2.5,
+              rx: 3.5,
               fill: HEAT[level],
             }))
             const month = day.slice(0, 7)
@@ -2331,8 +2388,6 @@ window.__ModuleLoader__.load({
             .filter(group => group.cost > 0 || group.count > 0)
             .sort((a, b) => b.cost - a.cost)
 
-          const bucketTotal = BUCKETS.reduce((sum, key) => sum + bucketCost[key], 0)
-          const bucketMax = Math.max(0, ...BUCKETS.map(key => bucketCost[key]))
           const ranked = [...scoped]
             .map(row => ({ ...row, viewedCost: rangedCost.get(row.id) ?? 0 }))
             .sort((a, b) => b.viewedCost - a.viewedCost)
@@ -2385,7 +2440,7 @@ window.__ModuleLoader__.load({
 
           const shareOf = value => (totalCost > 0 ? `${(value / totalCost * 100).toFixed(1)}%` : '—')
           const card = (value, label, note) => h('div', { key: label, style: { minWidth: 150 } },
-            h('div', { style: { fontSize: size(28), fontWeight: 600, lineHeight: 1.25 } }, value),
+            h('div', { style: { fontSize: size(30), fontWeight: 600, lineHeight: 1.25 } }, value),
             h('div', { style: FAINTED }, label),
             note !== undefined && h('div', { style: { ...FAINTED, marginTop: 2 } }, note),
           )
@@ -2393,7 +2448,7 @@ window.__ModuleLoader__.load({
           const empty = all.length === 0
           if (empty) {
             return h('div', { style: { maxWidth: 640, margin: '80px auto', textAlign: 'center' } },
-              h('div', { style: { fontSize: size(15), fontWeight: 600, marginBottom: 8 } }, t('dashEmpty')),
+              h('div', { style: { fontSize: size(16), fontWeight: 600, marginBottom: 8 } }, t('dashEmpty')),
               h('div', { style: MUTED }, t('dashEmptyHint')),
             )
           }
@@ -2401,7 +2456,7 @@ window.__ModuleLoader__.load({
           const chip = (active, label, onClick) => h('button', {
             key: label, type: 'button', onClick,
             style: {
-              ...BUTTON, padding: '3px 10px', fontSize: size(11.5),
+              ...BUTTON, padding: '3px 10px', fontSize: size(13),
               background: active ? 'color-mix(in srgb, currentColor 16%, transparent)' : 'transparent',
               fontWeight: active ? 600 : 400,
             },
@@ -2417,9 +2472,9 @@ window.__ModuleLoader__.load({
               },
             },
               h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' } },
-                h('span', { style: { fontSize: size(15), fontWeight: 600 } }, t('dashTitle')),
+                h('span', { style: { fontSize: size(16), fontWeight: 600 } }, t('dashTitle')),
                 scope !== '' && h('button', {
-                  type: 'button', style: { ...BUTTON, padding: '2px 10px', fontSize: size(11.5) },
+                  type: 'button', style: { ...BUTTON, padding: '2px 10px', fontSize: size(13) },
                   onClick: () => { setScope(''); setPage(0) },
                 }, `← ${t('dashBack')}`),
                 h('span', { style: { flex: 1 } }),
@@ -2491,7 +2546,7 @@ window.__ModuleLoader__.load({
                   position: 'fixed', zIndex: 1100, pointerEvents: 'none',
                   left: Math.min(hover.x + 12, window.innerWidth - 220),
                   top: Math.max(hover.y - 44, 8),
-                  padding: '5px 9px', borderRadius: 8, fontSize: size(11.5),
+                  padding: '5px 9px', borderRadius: 8, fontSize: size(13),
                   border: `1px solid ${hairline}`,
                   background: 'color-mix(in srgb, Canvas 92%, CanvasText)',
                   color: 'CanvasText', boxShadow: '0 6px 18px rgba(0,0,0,.3)',
@@ -2502,18 +2557,15 @@ window.__ModuleLoader__.load({
 
             // ---- composition and ranking
             h('div', { style: { display: 'flex', gap: 14, flexWrap: 'wrap' } },
-              h('div', { style: { ...GROUP, flex: REPORT_COLUMN } },
-                h('div', { style: { fontWeight: 600, marginBottom: 10 } }, t('reportByBucket')),
-                ...BUCKETS.map((key, index) => h(Bar, {
-                  key,
-                  label: t(key),
-                  value: bucketCost[key],
-                  max: bucketMax,
-                  color: SERIES[index % SERIES.length],
-                  text: money(bucketCost[key]),
-                  share: bucketTotal > 0 ? `${(bucketCost[key] / bucketTotal * 100).toFixed(1)}%` : '—',
+              h(Composition, {
+                title: t('reportByBucket'),
+                slices: BUCKETS.map((key, index) => ({
+                  label: t(key), value: bucketCost[key], color: SERIES[index % SERIES.length],
                 })),
-              ),
+                money,
+                empty: t('reportEmpty'),
+                style: { flex: REPORT_COLUMN, minWidth: 0 },
+              }),
               h('div', { style: { ...GROUP, flex: REPORT_COLUMN } },
                 h('div', { style: { fontWeight: 600, marginBottom: 10 } }, t('dashByProject')),
                 projects.length === 0 && h('div', { style: FAINTED }, '—'),
