@@ -343,6 +343,7 @@ window.__ModuleLoader__.load({
       reportNoModel: '未归因',
       reportOther: '其他',
       reportNoProject: '未归入项目',
+      panelTitle: '花费统计',
       dashTitle: '账号花费',
       dashBack: '返回全部项目',
       dashAllTime: '全部时间',
@@ -469,6 +470,7 @@ window.__ModuleLoader__.load({
       reportNoModel: 'Unattributed',
       reportOther: 'Other',
       reportNoProject: 'No project',
+      panelTitle: 'Spend',
       dashTitle: 'Account spend',
       dashBack: 'Back to all projects',
       dashAllTime: 'All time',
@@ -1963,6 +1965,7 @@ window.__ModuleLoader__.load({
                   }, `${projectLabel(group.workspaceId)} · ${group.count}`)),
                 ),
               ),
+              h('div', { style: { ...FAINTED, marginBottom: 12, maxWidth: 780 } }, t('reportIntro')),
 
               h('div', { style: GROUP },
                 h('div', { style: { display: 'flex', gap: 28, flexWrap: 'wrap' } },
@@ -2064,12 +2067,10 @@ window.__ModuleLoader__.load({
           )
 
           // This is a main panel now, so it already owns the full column; the
-          // former settings-section fullscreen escape hatch is gone with it.
-          return h('div', { style: PAGE },
-            h('h3', { style: { ...SECTION_TITLE, margin: '0 0 4px' } }, t('reportTitle')),
-            h('div', { style: { ...MUTED, marginBottom: 14, maxWidth: 720 } }, t('reportIntro')),
-            body,
-          )
+          // former settings-section fullscreen escape hatch is gone with it. The
+          // panel header (title + tabs + filters) belongs to the tab host, not to
+          // this view: two views under one entry must not each draw their own.
+          return body
         }
 
         // ----------------------------------------------------------- dashboard
@@ -2214,30 +2215,6 @@ window.__ModuleLoader__.load({
               d: 'M12 7.2v9.6M9.6 9.6h3.4a1.9 1.9 0 0 1 0 3.8H9.6m0 0h4',
               fill: 'none', stroke: 'currentColor', strokeWidth: 1.6,
               strokeLinecap: 'round', strokeLinejoin: 'round',
-            }),
-          )
-        }
-
-        /**
-         * Sidebar icon for the per-project panel.
-         *
-         * Deliberately a different glyph from the account one: two adjacent rows
-         * in the same list must be told apart at 16px, where a shared coin shape
-         * would read as the same button twice.
-         */
-        function ReportIcon({ size, active }) {
-          return h('svg', {
-            viewBox: '0 0 24 24', width: size, height: size,
-            'aria-hidden': true, style: { display: 'block', opacity: active ? 1 : 0.75 },
-          },
-            h('rect', {
-              x: 4, y: 4, width: 16, height: 16, rx: 3, fill: 'none',
-              stroke: 'currentColor', strokeWidth: 1.6,
-            }),
-            h('path', {
-              d: 'M8 15.5v-3M12 15.5v-7M16 15.5v-4.5',
-              fill: 'none', stroke: 'currentColor', strokeWidth: 1.7,
-              strokeLinecap: 'round',
             }),
           )
         }
@@ -2462,37 +2439,33 @@ window.__ModuleLoader__.load({
             },
           }, label)
 
-          return h('div', { style: PAGE },
-            // ---- sticky filters
+          return h('div', null,
+            // ---- filters for this view (the tab host owns the panel header)
             h('div', {
               style: {
-                position: 'sticky', top: 0, zIndex: 5, paddingBottom: 10, marginBottom: 14,
-                background: 'color-mix(in srgb, Canvas 94%, CanvasText)',
-                borderBottom: `1px solid ${hairline}`,
+                display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+                marginBottom: 14,
               },
             },
-              h('div', { style: { display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' } },
-                h('span', { style: { fontSize: size(16), fontWeight: 600 } }, t('dashTitle')),
-                scope !== '' && h('button', {
-                  type: 'button', style: { ...BUTTON, padding: '2px 10px', fontSize: size(13) },
-                  onClick: () => { setScope(''); setPage(0) },
-                }, `← ${t('dashBack')}`),
-                h('span', { style: { flex: 1 } }),
-                h('select', {
-                  style: { ...SELECT, width: 'min(240px, 100%)' },
-                  value: scope,
-                  onChange: event => { setScope(event.target.value); setPage(0) },
-                },
-                  h('option', { value: '', style: OPTION }, `${t('reportAllProjects')}（${all.length}）`),
-                  ...projects.map(group => h('option', {
-                    key: group.workspaceId || 'none', value: group.workspaceId, style: OPTION,
-                  }, `${projectTitle(group.workspaceId)} · ${group.count}`)),
-                ),
-                h('div', { style: { display: 'flex', gap: 4 } },
-                  chip(range === 'all', t('dashAllTime'), () => { setRange('all'); setPage(0) }),
-                  chip(range === '30', t('dash30'), () => { setRange('30'); setPage(0) }),
-                  chip(range === '7', t('dash7'), () => { setRange('7'); setPage(0) }),
-                ),
+              scope !== '' && h('button', {
+                type: 'button', style: { ...BUTTON, padding: '2px 10px', fontSize: size(13) },
+                onClick: () => { setScope(''); setPage(0) },
+              }, `← ${t('dashBack')}`),
+              h('select', {
+                style: { ...SELECT, width: 'min(240px, 100%)' },
+                value: scope,
+                onChange: event => { setScope(event.target.value); setPage(0) },
+              },
+                h('option', { value: '', style: OPTION }, `${t('reportAllProjects')}（${all.length}）`),
+                ...projects.map(group => h('option', {
+                  key: group.workspaceId || 'none', value: group.workspaceId, style: OPTION,
+                }, `${projectTitle(group.workspaceId)} · ${group.count}`)),
+              ),
+              h('span', { style: { flex: 1 } }),
+              h('div', { style: { display: 'flex', gap: 4 } },
+                chip(range === 'all', t('dashAllTime'), () => { setRange('all'); setPage(0) }),
+                chip(range === '30', t('dash30'), () => { setRange('30'); setPage(0) }),
+                chip(range === '7', t('dash7'), () => { setRange('7'); setPage(0) }),
               ),
             ),
 
@@ -2650,6 +2623,73 @@ window.__ModuleLoader__.load({
         }
 
         /**
+         * The panel's view switch.
+         *
+         * A segmented control rather than a row of links: the two views are peers
+         * of one entry, and the active one has to be obvious at a glance.
+         * @param props - `{ value, options, onChange }`; options are `{ value, label }`.
+         */
+        function Tabs({ value, options, onChange }) {
+          return h('div', {
+            style: {
+              display: 'inline-flex', gap: 2, padding: 2, borderRadius: 9,
+              border: `1px solid ${hairline}`,
+              background: 'color-mix(in srgb, currentColor 6%, transparent)',
+            },
+          }, ...options.map(option => h('button', {
+            key: option.value,
+            type: 'button',
+            'aria-pressed': option.value === value,
+            onClick: () => onChange(option.value),
+            style: {
+              ...BUTTON,
+              border: 'none',
+              padding: '3px 14px',
+              background: option.value === value
+                ? 'color-mix(in srgb, currentColor 16%, transparent)'
+                : 'transparent',
+              fontWeight: option.value === value ? 600 : 400,
+            },
+          }, option.label)))
+        }
+
+        /**
+         * The single 「花费统计」 panel: one header, two views as tabs.
+         *
+         * Both views answer the same question from different angles, so they share
+         * one sidebar entry and one page header; account spend is the default
+         * because "what have I spent" is the question a spender arrives with.
+         * Only the visible view is mounted: the header is state, the views are not.
+         * @param props - the slot host's shares, forwarded to the active view.
+         */
+        function CostPanel(props) {
+          const [tab, setTab] = React.useState('account')
+          return h('div', { style: PAGE },
+            h('div', {
+              style: {
+                position: 'sticky', top: 0, zIndex: 5,
+                display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap',
+                padding: '0 0 10px', marginBottom: 14,
+                background: 'color-mix(in srgb, Canvas 96%, CanvasText)',
+                borderBottom: `1px solid ${hairline}`,
+              },
+            },
+              h('span', { style: { fontSize: size(16), fontWeight: 600 } }, t('panelTitle')),
+              h('span', { style: { flex: 1 } }),
+              h(Tabs, {
+                value: tab,
+                onChange: setTab,
+                options: [
+                  { value: 'account', label: t('dashTitle') },
+                  { value: 'projects', label: t('reportTitle') },
+                ],
+              }),
+            ),
+            tab === 'account' ? h(CostDashboard, props) : h(CostReport, props),
+          )
+        }
+
+        /**
          * Wrap one slot entry so a render failure stays legible.
          *
          * A thrown render used to blank the entire settings content column with
@@ -2684,33 +2724,22 @@ window.__ModuleLoader__.load({
           order: 1,
         }, boundary('cost meter', CostMeter)))
 
-        // Two sidebar panels, matching the two questions a spender asks:
-        // "what have I spent in total" (account) and "where did it go"
-        // (project). A sidebar panellist id addresses the main panel of the
-        // same key, so the id and the key must agree.
+        // One sidebar entry, two views: "what have I spent in total" (account) and
+        // "where did it go" (project) are the same page asked two ways, and two
+        // entries made the sidebar longer than the difference between them. A
+        // sidebar panellist id addresses the main panel of the same key, so the id
+        // and the key must still agree.
         ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
           name: 'sidebar.panellist',
           id: 'cost',
           order: 1,
-          label: () => t('dashTitle'),
+          label: () => t('panelTitle'),
         }, boundary('cost icon', CostIcon)))
 
         ctx.slots.inject('main', () => ctx.slots.register({
           name: 'main',
           key: 'cost',
-        }, boundary('cost dashboard', CostDashboard)))
-
-        ctx.slots.inject('sidebar.panellist', () => ctx.slots.register({
-          name: 'sidebar.panellist',
-          id: 'cost-projects',
-          order: 2,
-          label: () => t('reportTitle'),
-        }, boundary('cost report icon', ReportIcon)))
-
-        ctx.slots.inject('main', () => ctx.slots.register({
-          name: 'main',
-          key: 'cost-projects',
-        }, boundary('cost report', CostReport)))
+        }, boundary('cost panel', CostPanel)))
 
         // Settings keeps only what configures the meter: the price table, the
         // ledger controls, and the backfill that fills in history.

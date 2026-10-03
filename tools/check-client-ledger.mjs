@@ -179,9 +179,11 @@ const render = (element, path, depth = 0) => {
   }
 }
 
-const renderSurface = element => {
+const renderSurface = (element, keepState = false) => {
   let tree = null
-  hookState.clear()   // once per surface: state set by an effect must survive into the next pass
+  // A fresh surface starts from fresh hook state; a re-render after a click has
+  // to keep whatever that click set.
+  if (keepState !== true) hookState.clear()
   for (let pass = 0; pass < 4; pass += 1) {
     pendingEffects = []
     tree = render(element, 'root', 0)
@@ -248,20 +250,61 @@ const shellProps = {
   useSessions: selector => selector(snapshot),
   useWorkspaces: selector => selector({ items: [{ workspaceId: 'w1', title: 'md', sessionIds: ['session-a'] }] }),
 }
-for (const key of ['cost', 'cost-projects']) {
-  const entry = registrations.find(item => item.spec?.name === 'main' && item.spec?.key === key)
-  let text = ''
-  let error = null
-  try {
-    text = flatten(renderSurface(React.createElement(entry.component, shellProps))).replace(/\s+/g, ' ')
-  } catch (caught) {
-    error = caught
-  }
-  check(`main panel ${key} renders content`, error === null && text.trim().length > 0,
-    error === null ? `${text.trim().length} chars` : String(error))
-  if (error === null && key === 'cost') {
-    check('dashboard shows a priced total', /¥0\.13/.test(text), text.slice(0, 100))
-  }
+
+// One sidebar entry, two views as tabs. The sidebar contract keys a panel by id
+// and addresses the main slot by the same key, so a stray second entry shows up
+// here as a longer list rather than as a missing panel.
+const panelEntries = registrations.filter(item => item.spec?.name === 'sidebar.panellist')
+const mainEntries = registrations.filter(item => item.spec?.name === 'main')
+check('the sidebar carries exactly one spend entry',
+  panelEntries.length === 1 && panelEntries[0].spec?.id === 'cost',
+  panelEntries.map(item => item.spec?.id).join(',') || 'none')
+check('the main slot carries exactly that key',
+  mainEntries.length === 1 && mainEntries[0].spec?.key === 'cost',
+  mainEntries.map(item => item.spec?.key).join(',') || 'none')
+
+const costPanel = mainEntries[0]
+const accountTree = renderSurface(React.createElement(costPanel.component, shellProps))
+let accountText = ''
+let accountError = null
+try {
+  accountText = flatten(accountTree).replace(/\s+/g, ' ')
+} catch (caught) {
+  accountError = caught
+}
+check('the spend panel renders content', accountError === null && accountText.trim().length > 0,
+  accountError === null ? `${accountText.trim().length} chars` : String(accountError))
+
+const zhStrings = localeStrings['dsh-cost:zh'] ?? {}
+const accountTab = zhStrings.dashTitle
+const projectsTab = zhStrings.reportTitle
+check('both view tabs render',
+  accountText.includes(accountTab) && accountText.includes(projectsTab),
+  `${accountTab} / ${projectsTab}`)
+check('account spend is the default view',
+  accountText.includes(zhStrings.dashActivity) && !accountText.includes(zhStrings.reportScope),
+  accountText.slice(0, 90))
+check('dashboard shows a priced total', /¥0\.13/.test(accountText), accountText.slice(0, 100))
+
+/** Every element of a rendered tree, flattened. */
+const treeNodes = node => {
+  if (node === null || node === undefined || typeof node !== 'object') return []
+  if (Array.isArray(node)) return node.flatMap(treeNodes)
+  return [node, ...treeNodes(node.children ?? [])]
+}
+
+// Click the projects tab: the views are peers of one entry, so switching has to
+// work without a reload, and the second render keeps the hook state a click set.
+const projectsTabButton = treeNodes(accountTree).find(node => node.type === 'button'
+  && flatten(node.children).includes(projectsTab))
+check('the projects tab is a real button', projectsTabButton !== undefined)
+if (projectsTabButton !== undefined) {
+  projectsTabButton.props.onClick()
+  const projectsText = flatten(renderSurface(
+    React.createElement(costPanel.component, shellProps), true)).replace(/\s+/g, ' ')
+  check('clicking it switches to the project view',
+    projectsText.includes(zhStrings.reportScope) && !projectsText.includes(zhStrings.dashActivity),
+    projectsText.slice(0, 90))
 }
 
 const settingsEntry = registrations.find(item => item.spec?.name === 'settings.section')
@@ -294,10 +337,7 @@ check('composer pill renders without throwing', pillError === null, pillError ==
 // a centered fixed page width leaves most of a wide window empty. Both were true
 // of every surface here, so both are pinned now.
 const surfaces = [
-  ['main[cost]', renderSurface(React.createElement(
-    registrations.find(item => item.spec?.name === 'main' && item.spec?.key === 'cost').component, shellProps))],
-  ['main[cost-projects]', renderSurface(React.createElement(
-    registrations.find(item => item.spec?.name === 'main' && item.spec?.key === 'cost-projects').component, shellProps))],
+  ['main[cost]', accountTree],
   ['settings.section[cost]', renderSurface(React.createElement(settingsEntry.component, shellProps))],
 ]
 const markup = surfaces.map(([, tree]) => JSON.stringify(tree)).join('\n')
