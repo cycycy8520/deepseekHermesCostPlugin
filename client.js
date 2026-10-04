@@ -372,6 +372,13 @@ window.__ModuleLoader__.load({
       budgetSaved: '已保存',
       budgetFailed: '保存失败（见浏览器控制台）',
       budgetOverBy: '已超支',
+      balanceTitle: 'DeepSeek 余额',
+      balanceGranted: '赠额',
+      balanceToppedUp: '充值',
+      balanceRefresh: '刷新',
+      balanceLoading: '查询中…',
+      balanceUnset: '未配置 DEEPSEEK_API_KEY（在设置 → 账号与余额 里配置后即可显示）',
+      balanceFailed: '查询失败：{reason}',
       tierNow: '峰谷：当前',
       tierPeak: '高峰（全价）',
       tierOffPeak: '低谷（半价）',
@@ -542,6 +549,13 @@ window.__ModuleLoader__.load({
       budgetSaved: 'Saved',
       budgetFailed: 'Save failed (see the browser console)',
       budgetOverBy: 'over by',
+      balanceTitle: 'DeepSeek balance',
+      balanceGranted: 'granted',
+      balanceToppedUp: 'topped up',
+      balanceRefresh: 'Refresh',
+      balanceLoading: 'Checking…',
+      balanceUnset: 'DEEPSEEK_API_KEY is not configured (add it under Settings → Account & balance)',
+      balanceFailed: 'Lookup failed: {reason}',
       tierNow: 'Peak pricing: now',
       tierPeak: 'peak (full rate)',
       tierOffPeak: 'off-peak (half rate)',
@@ -2275,6 +2289,62 @@ window.__ModuleLoader__.load({
          * The tier line: which side of the peak boundary we are on, and how long.
          * @param props - `{ models, holidays }`.
          */
+        /**
+         * The account balance line: what the provider says is left, and a refresh.
+         *
+         * The key is never touched here — the Host reads it from the harness credential
+         * store and answers over `/api/cost/balance`. An unconfigured key or a failed
+         * request is stated on the line rather than shown as a zero balance, because a
+         * silent zero is indistinguishable from an empty account.
+         */
+        function BalanceLine() {
+          const [state, setState] = React.useState({ status: 'idle' })
+          const load = React.useCallback(async () => {
+            setState({ status: 'loading' })
+            try {
+              const response = await fetch('/api/cost/balance', { method: 'POST' })
+              const payload = await response.json().catch(() => null)
+              if (payload?.ok === true && payload.balance !== undefined) {
+                setState({
+                  status: 'ready', balance: payload.balance, available: payload.available !== false,
+                })
+                return
+              }
+              setState({
+                status: payload?.configured === false ? 'unset' : 'failed',
+                reason: payload?.reason ?? `HTTP ${response.status}`,
+              })
+            } catch (error) {
+              setState({ status: 'failed', reason: String(error).slice(0, 120) })
+            }
+          }, [])
+          React.useEffect(() => { void load() }, [load])
+          const money = value => formatMoney(value, SYMBOLS[state.balance?.currency] ?? '¥')
+          return h('div', {
+            style: {
+              ...FAINTED, display: 'flex', alignItems: 'baseline', gap: 10,
+              flexWrap: 'wrap', marginBottom: 10,
+            },
+          },
+            h('span', null, t('balanceTitle')),
+            state.status === 'ready'
+              ? h('span', { style: { fontWeight: 600, color: 'inherit' } },
+                money(state.balance.total),
+                ` (${t('balanceGranted')} ${money(state.balance.granted)}`
+                + ` · ${t('balanceToppedUp')} ${money(state.balance.toppedUp)})`)
+              : null,
+            state.status === 'unset' ? h('span', null, t('balanceUnset')) : null,
+            state.status === 'failed'
+              ? h('span', { style: WARN }, t('balanceFailed', { reason: state.reason }))
+              : null,
+            h('button', {
+              type: 'button',
+              style: { ...BUTTON, padding: '1px 8px', fontSize: size(12.5) },
+              disabled: state.status === 'loading',
+              onClick: () => { void load() },
+            }, state.status === 'loading' ? t('balanceLoading') : t('balanceRefresh')),
+          )
+        }
         function TierLine({ models, holidays }) {
           const tier = tierCountdown(models, holidays)
           if (tier === undefined) return null
@@ -2941,6 +3011,7 @@ window.__ModuleLoader__.load({
 
             // ---- which side of the peak boundary we are on, and the limit below it
             h(TierLine, { models: config.models, holidays: config.holidays }),
+            h(BalanceLine, null),
 
             // ---- the limit for whatever scope this view is showing, always visible
             budget === undefined
@@ -3526,6 +3597,7 @@ window.__ModuleLoader__.load({
 
             // ---- which side of the peak boundary we are on, and the limit below it
             h(TierLine, { models: config.models, holidays: config.holidays }),
+            h(BalanceLine, null),
 
             // ---- the limit for whatever scope this view is showing, always visible
             budget === undefined

@@ -390,6 +390,13 @@ const CONFIG_PATH = '/api/cost/config'
 /** Absolute pathname the Client streams a history re-pricing run through. */
 const BACKFILL_PATH = '/api/cost/backfill'
 
+/** Absolute pathname the Client asks for the account balance through. */
+const BALANCE_PATH = '/api/cost/balance'
+
+/** The official balance endpoint, and the key name it is read with. */
+const BALANCE_URL = 'https://api.deepseek.com/user/balance'
+const BALANCE_KEY = 'DEEPSEEK_API_KEY'
+
 /** One JSON response, never cached: every read of a live ledger is fresh. */
 function json(value, status = 200) {
   return new Response(JSON.stringify(value), {
@@ -776,6 +783,67 @@ export function apply(ctx) {
         }
         const result = await store.commit({ revision: body?.revision, config: body?.config })
         return json(result, result.ok === true ? 200 : 409)
+      },
+    },
+  ])
+
+  // The balance route reads the key from the harness credential store rather than
+  // from configuration: a secret in a config document is a secret in every backup
+  // and screenshot of it. An unconfigured key answers plainly instead of calling out.
+  mount(['connection', 'credentials'], 'dsh-cost: balance route', scoped => [
+    {
+      path: BALANCE_PATH,
+      methods: ['POST'],
+      requestBody: 'buffered',
+      /**
+       * Ask the provider for this account's balance.
+       * @returns { ok, configured, balance?, reason? }; never the key itself.
+       */
+      fetch: async () => {
+        let key
+        try {
+          const hit = await scoped.credentials.resolve(BALANCE_KEY)
+          key = hit?.value
+        } catch (error) {
+          return json({ ok: false, configured: true, reason: `凭据读取失败: ${String(error).slice(0, 120)}` })
+        }
+        if (typeof key !== 'string' || key.length === 0) {
+          return json({ ok: false, configured: false, reason: '未配置 DEEPSEEK_API_KEY' })
+        }
+        try {
+          const response = await fetch(BALANCE_URL, {
+            headers: { authorization: `Bearer ${key}`, accept: 'application/json' },
+          })
+          const payload = await response.json().catch(() => null)
+          if (!response.ok || payload === null) {
+            return json({
+              ok: false,
+              configured: true,
+              reason: `官方接口 HTTP ${response.status}`,
+            })
+          }
+          const info = Array.isArray(payload?.balance_infos) ? payload.balance_infos[0] : undefined
+          if (info === undefined) {
+            return json({ ok: false, configured: true, reason: '官方应答里没有余额字段' })
+          }
+          const amount = value => {
+            const parsed = Number.parseFloat(String(value ?? ''))
+            return Number.isFinite(parsed) ? parsed : 0
+          }
+          return json({
+            ok: true,
+            configured: true,
+            available: payload.is_available !== false,
+            balance: {
+              currency: typeof info.currency === 'string' ? info.currency : 'CNY',
+              total: amount(info.total_balance),
+              granted: amount(info.granted_balance),
+              toppedUp: amount(info.topped_up_balance),
+            },
+          })
+        } catch (error) {
+          return json({ ok: false, configured: true, reason: `请求失败: ${String(error).slice(0, 120)}` })
+        }
       },
     },
   ])

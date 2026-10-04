@@ -64,7 +64,8 @@ const call = async (path, method, body) => {
 check('state route registered', routes.has('/api/cost/state'))
 check('config route registered', routes.has('/api/cost/config'))
 check('backfill route registered', routes.has('/api/cost/backfill'))
-check('effects registered', effects.length === 2, effects.join(' | '))
+check('effects registered', effects.length === 3, effects.join(' | '))
+check('balance route registered', routes.has('/api/cost/balance'))
 
 let state = await call('/api/cost/state', 'GET')
 check('fresh document answers ok', state.body.ok === true && state.status === 200)
