@@ -411,10 +411,14 @@ check('recorded wall time survives a missing host projection',
 // — and the warning has to be a warning, not the same text as a normal figure.
 // With no limit set for this scope, the line must still be there and must say how
 // to set one: a feature that only appears after it is configured is invisible.
-check('a scope without a budget still shows the line',
+check('a scope without a budget offers the editor inline',
   accountText.includes(zhStrings.budgetTitle) && accountText.includes(zhStrings.budgetUnset)
-    && accountText.includes(zhStrings.budgetWhere) && accountText.includes('¥1.63'),
+    && accountText.includes(zhStrings.budgetSet) && accountText.includes('¥1.63'),
   accountText.match(/预算[^。]{0,80}/)?.[0] ?? 'no budget line')
+check('the panel states the current peak tier',
+  accountText.includes(zhStrings.tierNow)
+    && (accountText.includes(zhStrings.tierPeak) || accountText.includes(zhStrings.tierOffPeak)),
+  accountText.match(/峰谷：当前[^ ]{0,30}/)?.[0] ?? 'no tier line')
 
 /** Press the button whose label matches, as a user would. */
 const pressButton = (tree, label) => {

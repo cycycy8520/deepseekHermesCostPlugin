@@ -362,6 +362,12 @@ window.__ModuleLoader__.load({
       budgetPeriodAll: '累计',
       budgetAdd: '添加预算',
       budgetUnset: '未设置上限',
+      budgetSet: '设置上限',
+      tierNow: '峰谷：当前',
+      tierPeak: '高峰（全价）',
+      tierOffPeak: '低谷（半价）',
+      tierUntilPeak: '距转高峰',
+      tierUntilOffPeak: '距转低谷',
       budgetSpentAll: '累计已花',
       budgetWhere: '去「设置 → 花费计价 → 预算」加一条，给这个范围设上限',
       budgetEmpty: '还没有预算。给账号或某个项目设一个上限，超支会在上方进度条里变红。',
@@ -519,6 +525,12 @@ window.__ModuleLoader__.load({
       budgetPeriodAll: 'All time',
       budgetAdd: 'Add a budget',
       budgetUnset: 'no limit set',
+      budgetSet: 'Set limit',
+      tierNow: 'Peak pricing: now',
+      tierPeak: 'peak (full rate)',
+      tierOffPeak: 'off-peak (half rate)',
+      tierUntilPeak: 'peak in',
+      tierUntilOffPeak: 'off-peak in',
       budgetSpentAll: 'spent so far',
       budgetWhere: 'Add one under Settings → Cost → Budget to set a limit for this scope',
       budgetEmpty: 'No budget yet. Set a limit for the account or for one project; going over turns the bar above red.',
@@ -2192,7 +2204,74 @@ window.__ModuleLoader__.load({
           return total
         }
 
-        /** The label a scope is known by, in both the bar and the settings editor. */
+        /**
+         * Write one scope's limit into the stored configuration.
+         *
+         * The panel and the settings page write through the same route, so a limit set
+         * from the panel is the same record the settings editor later shows — there is
+         * no second source of truth for a budget.
+         * @param scopeId - `''` for the account, `NO_PROJECT`, or a workspace id.
+         * @param amount - the limit; a non-positive limit is refused by the Host.
+         * @param period - `'day' | 'month' | 'all'`.
+         */
+        async function saveBudget(scopeId, amount, period) {
+          const current = view?.value ?? {}
+          const budgets = { ...(current.budgets ?? {}), [scopeId]: { amount, period } }
+          try {
+            await write({ ...current, budgets })
+            await pull(false)
+            notify()
+          } catch (error) {
+            // The input already blocks a non-positive limit, so a failure here is a
+            // transport problem rather than user error; keep it off the page.
+            console.warn('dsh-cost: budget write failed', error)
+          }
+        }
+        /**
+         * The current peak/off-peak tier and the countdown to the next switch.
+         *
+         * Every rate in the price table halves or doubles at the switch, so "which tier
+         * am I in and when does it change" is a fact about the bill, not decoration.
+         * The next boundary is found by walking forward a minute at a time and asking
+         * the same `isOffPeak` predicate the pricing uses — the tier is then guaranteed
+         * to agree with what is actually charged, which a second window formula would
+         * not be.
+         * @param models - the configured price rows.
+         * @param holidays - Beijing dates that count as off-peak.
+         * @returns `{ offPeak, minutes }`, or undefined when no row has peak pricing.
+         */
+        function tierCountdown(models, holidays) {
+          const discount = (models ?? []).map(row => row.discount).find(entry => entry !== undefined)
+          if (discount === undefined) return undefined
+          const now = Date.now()
+          const offPeak = isOffPeak(now, discount, holidays)
+          for (let step = 1; step <= 26 * 60; step += 1) {
+            if (isOffPeak(now + step * 60000, discount, holidays) !== offPeak) {
+              return { offPeak, minutes: step }
+            }
+          }
+          return { offPeak, minutes: undefined }
+        }
+
+        /**
+         * The tier line: which side of the peak boundary we are on, and how long.
+         * @param props - `{ models, holidays }`.
+         */
+        function TierLine({ models, holidays }) {
+          const tier = tierCountdown(models, holidays)
+          if (tier === undefined) return null
+          const label = tier.offPeak ? t('tierOffPeak') : t('tierPeak')
+          const when = tier.minutes === undefined
+            ? ''
+            : ` · ${tier.offPeak ? t('tierUntilPeak') : t('tierUntilOffPeak')} `
+              + formatDuration(tier.minutes * 60000)
+          return h('div', {
+            style: { ...FAINTED, marginBottom: 10 },
+          }, `${t('tierNow')} ${label}${when}`)
+        }
+
+        /**
+         * The label a scope is known by, in both the bar and the settings editor. */
         function scopeLabelOf(scope, items) {
           if (scope === '') return t('budgetScopeAccount')
           if (scope === NO_PROJECT) return t('reportNoProject')
@@ -2200,22 +2279,60 @@ window.__ModuleLoader__.load({
         }
 
         /**
-         * The budget line when this scope has no limit yet.
+         * The budget line when this scope has no limit yet — with the editor inline.
          *
-         * The first version of the bar only rendered once a budget existed, so the
-         * feature was invisible to anyone who had not already configured it — the
-         * reader saw nothing at all and had no way to learn where a limit is set.
-         * This line always renders in its place: what the scope has spent, and where
-         * the limit goes.
-         * @param props - `{ label, spent, money }`.
+         * Two earlier versions of this failed the same way: the bar only appeared once
+         * a budget existed, and the editor lived at the bottom of a long settings page.
+         * Either way the reader — who is looking at the spend, right here — could not
+         * find where a limit is set. So the controls sit in the line itself: pick the
+         * scope, type an amount, pick a period, press set. The settings page keeps its
+         * editor for editing what already exists.
+         * @param props - `{ label, spent, money, items, scope, onSet }`.
          */
-        function BudgetHint({ label, spent, money }) {
-          return h('div', {
-            style: { ...FAINTED, display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 14 },
-          },
-            h('span', null, `${t('budgetTitle')} · ${label} · ${t('budgetUnset')}`),
-            h('span', null, `${t('budgetSpentAll')} ${money(spent)}`),
-            h('span', null, t('budgetWhere')),
+        function BudgetHint({ label, spent, money, items, scope, onSet }) {
+          const [target, setTarget] = React.useState(scope)
+          const [amount, setAmount] = React.useState(100)
+          const [period, setPeriod] = React.useState('month')
+          return h('div', { style: { ...GROUP, padding: '10px 14px', marginBottom: 14 } },
+            h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
+              h('span', { style: { fontWeight: 600 } }, t('budgetTitle')),
+              h('span', { style: MUTED },
+                `${label} · ${t('budgetSpentAll')} ${money(spent)} · ${t('budgetUnset')}`),
+              h('span', { style: { flex: 1 } }),
+              h('select', {
+                style: { ...SELECT, width: 'min(200px, 100%)' },
+                value: target,
+                'aria-label': t('budgetScope'),
+                onChange: event => setTarget(event.target.value),
+              },
+                h('option', { value: '', style: OPTION }, t('budgetScopeAccount')),
+                h('option', { value: NO_PROJECT, style: OPTION }, t('reportNoProject')),
+                ...items.map(item => h('option', {
+                  key: item?.workspaceId ?? 'none', value: item?.workspaceId ?? '', style: OPTION,
+                }, projectNameOf(items, item?.workspaceId ?? '')))),
+              h('input', {
+                style: { ...INPUT, width: 100, textAlign: 'right' },
+                inputMode: 'decimal',
+                'aria-label': t('budgetAmount'),
+                value: String(amount),
+                onChange: event => setAmount(numberOrZero(event.target.value)),
+              }),
+              h('select', {
+                style: { ...SELECT, width: 120 },
+                value: period,
+                'aria-label': t('budgetPeriod'),
+                onChange: event => setPeriod(event.target.value),
+              },
+                h('option', { value: 'day', style: OPTION }, t('budgetPeriodDay')),
+                h('option', { value: 'month', style: OPTION }, t('budgetPeriodMonth')),
+                h('option', { value: 'all', style: OPTION }, t('budgetPeriodAll'))),
+              h('button', {
+                type: 'button',
+                style: BUTTON,
+                disabled: !(amount > 0),
+                onClick: () => onSet(target, amount, period),
+              }, t('budgetSet')),
+            ),
           )
         }
 
@@ -2680,12 +2797,18 @@ window.__ModuleLoader__.load({
               onRange: next => { setRange(next); setPage(0) },
             }),
 
+            // ---- which side of the peak boundary we are on, and the limit below it
+            h(TierLine, { models: config.models, holidays: config.holidays }),
+
             // ---- the limit for whatever scope this view is showing, always visible
             budget === undefined
               ? h(BudgetHint, {
                 label: scopeLabelOf(scope, items),
                 spent: spentIn(rows, 'all', budgetToday, budgetMonth),
                 money,
+                items,
+                scope,
+                onSet: saveBudget,
               })
               : h(BudgetBar, {
                 label: scopeLabelOf(scope, items),
@@ -3251,12 +3374,18 @@ window.__ModuleLoader__.load({
               onRange: next => { setRange(next); setPage(0) },
             }),
 
+            // ---- which side of the peak boundary we are on, and the limit below it
+            h(TierLine, { models: config.models, holidays: config.holidays }),
+
             // ---- the limit for whatever scope this view is showing, always visible
             budget === undefined
               ? h(BudgetHint, {
                 label: scopeLabelOf(scope, items),
                 spent: spentIn(scoped, 'all', budgetToday, budgetMonth),
                 money,
+                items,
+                scope,
+                onSet: saveBudget,
               })
               : h(BudgetBar, {
                 label: scopeLabelOf(scope, items),
