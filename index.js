@@ -3,7 +3,7 @@
  *
  * It owns exactly one thing: the durable document holding the user's
  * effective-dated price table and the machine-written spend ledger, written to
- * a file this package owns (`$DSH_HOME/dsh-cost-meter/state.json`) and served
+ * a file this package owns (`$DSH_HOME/dsh-hermes-cost-meter/state.json`) and served
  * over three routes under `/api/cost`. No billing arithmetic happens here — the
  * Client half computes every figure — so this half exists only because the
  * browser cannot write a durable file and `localStorage` dies with the cache.
@@ -116,8 +116,18 @@ const DEFAULTS = {
   flushMs: 4000,
   models: DEFAULT_MODELS,
   holidays: DEFAULT_HOLIDAYS,
+  /**
+   * Spend limits, keyed by scope: `''` is the whole account, any other key is a
+   * workspace id. A per-project limit is the figure this plugin exists for — "how
+   * much has THIS module cost me" — so the scope is part of the key rather than a
+   * global setting with a filter.
+   */
+  budgets: {},
   ledger: {},
 }
+
+/** Budget periods, in the order the UI offers them. */
+export const BUDGET_PERIODS = ['day', 'month', 'all']
 
 const RATE_KEYS = ['cacheHit', 'cacheMiss', 'cacheWrite', 'output']
 /** The four disjoint billing buckets, in the order the UI reads them. */
@@ -301,7 +311,29 @@ export function resolveConfig(raw) {
     flushMs: isNonNegative(value.flushMs) && value.flushMs >= 500 ? value.flushMs : DEFAULTS.flushMs,
     models: models.length > 0 ? models : fallback,
     holidays: holidays.length > 0 ? holidays : DEFAULTS.holidays,
+    budgets: normalizeBudgets(value.budgets),
   }
+}
+
+/**
+ * Normalize the budget table: a scope maps to `{ amount, period }`.
+ *
+ * An unusable entry is dropped rather than repaired into a limit nobody asked
+ * for — a budget that silently becomes a different number is worse than no
+ * budget, because the warning it drives would be wrong.
+ * @param raw - whatever the document held under `budgets`.
+ * @returns a scope-keyed table of valid limits.
+ */
+export function normalizeBudgets(raw) {
+  if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return {}
+  const out = {}
+  for (const [scope, entry] of Object.entries(raw)) {
+    if (entry === null || typeof entry !== 'object') continue
+    if (!isNonNegative(entry.amount) || entry.amount <= 0) continue
+    const period = BUDGET_PERIODS.includes(entry.period) ? entry.period : 'month'
+    out[scope] = { amount: entry.amount, period }
+  }
+  return out
 }
 
 /**
@@ -315,7 +347,7 @@ export const SCHEMA_TAG = 'dsh-cost-state/v1'
  * answerable without reading files. Kept equal to package.json by
  * 	ools/check-package.mjs, because a version that drifts is worse than none.
  */
-export const PLUGIN_VERSION = '1.3.0'
+export const PLUGIN_VERSION = '1.4.0'
 
 /** Harness home, without asking the framework for it (env first, then `~/.dsh`). */
 function harnessHome() {
@@ -326,6 +358,18 @@ function harnessHome() {
 
 /** Absolute path of the document this half owns. */
 export function stateFilePath() {
+  return join(harnessHome(), 'dsh-hermes-cost-meter', 'state.json')
+}
+
+/**
+ * Where this document lived before the package was renamed.
+ *
+ * A rename must not cost anyone their ledger: the first load after upgrading
+ * reads the old document when the new one is absent and writes it straight back
+ * under the new name. The old file is left in place — deleting a user's history
+ * to tidy up a directory name is not a trade this plugin gets to make.
+ */
+export function legacyStateFilePath() {
   return join(harnessHome(), 'dsh-cost-meter', 'state.json')
 }
 
@@ -357,7 +401,7 @@ function json(value, status = 200) {
 /** Whitelist the configuration keys a Client may write, so a stray field cannot land. */
 function pickConfig(raw) {
   const out = {}
-  for (const key of ['currency', 'flushMs', 'models', 'holidays']) {
+  for (const key of ['currency', 'flushMs', 'models', 'holidays', 'budgets']) {
     if (Object.prototype.hasOwnProperty.call(raw, key)) out[key] = raw[key]
   }
   return out
@@ -403,11 +447,25 @@ function createStore(ctx) {
       state = adoptDocument(JSON.parse(await readFile(path, 'utf8')))
       log('info', `dsh-cost: state loaded from ${path} (${Object.keys(state.ledger).length} rows)`)
     } catch (error) {
-      if (error?.code !== 'ENOENT' && !warned) {
-        warned = true
-        log('warn', `dsh-cost: state document unusable, starting from the built-in table: ${String(error)}`)
+      if (error?.code === 'ENOENT') {
+        // First run under the new package name: carry a pre-rename document over
+        // rather than starting from an empty ledger.
+        const legacy = legacyStateFilePath()
+        try {
+          state = adoptDocument(JSON.parse(await readFile(legacy, 'utf8')))
+          log('info', `dsh-cost: migrated ${Object.keys(state.ledger).length} rows from ${legacy}`)
+          await persist()
+          return state
+        } catch {
+          state = adoptDocument(null)
+        }
+      } else {
+        if (!warned) {
+          warned = true
+          log('warn', `dsh-cost: state document unusable, starting from the built-in table: ${String(error)}`)
+        }
+        state = adoptDocument(null)
       }
-      state = adoptDocument(null)
     }
     return state
   }
@@ -684,6 +742,7 @@ export function apply(ctx) {
             ok: true,
             version: 1,
             pluginVersion: PLUGIN_VERSION,
+            statePath: stateFilePath(),
             revision: document.revision,
             config: document.config,
             ledger: document.ledger,

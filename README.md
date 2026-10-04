@@ -1,4 +1,4 @@
-# dsh-cost-meter
+# dsh-hermes-cost-meter
 
 **DeepSeek Harness 的花费统计插件。** 告诉你每个对话、每个项目、每个模型花了多少钱——按**每一笔请求自己发生的时刻**计价，因此高峰/低谷时段、缓存命中/未命中、模型切换都被如实区分，而不是拿一个平均价去乘总数。
 
@@ -28,7 +28,7 @@ dsh plugin add https://github.com/cycycy8520/deepseekHermesCostPlugin
 | 本地目录 | 本机上插件目录的绝对路径（开发时用） |
 | tarball | `pnpm pack` 产出的 `.tgz` 路径 |
 
-> **本包尚未发布到 npm**，所以 `dsh plugin add dsh-cost-meter` 会失败——请用上面的 GitHub 地址。
+> **本包尚未发布到 npm**，所以 `dsh plugin add dsh-hermes-cost-meter` 会失败——请用上面的 GitHub 地址。
 
 **安装后重启一次 DeepSeek Harness。** 只有 host 半边需要重启（它注册 `/api/cost/*` 路由）；之后只改客户端半边，刷新页面即可。
 
@@ -36,6 +36,18 @@ dsh plugin add https://github.com/cycycy8520/deepseekHermesCostPlugin
 
 ---
 
+## 预算与对账
+
+**预算**可以设在**账号**上，也可以设在**单个项目**上（设置 → 花费计价 → 预算）。金额用显示货币，周期为 今日 / 本月 / 累计。设好之后，面板顶部会出现一条进度条：`预算 · 范围 · 已用/上限 · 百分比`，用到 80% 变黄、超支变红 —— 项目预算算的就是那个项目自己的对话，所以"**这个模块花了多少钱**"是这一行。
+
+**对账**（设置 → 花费计价 → 对账口径）把本插件与官方账单可能对不上的地方写在页面上，先看它再怀疑数字：
+
+- **计费口径**：未缓存输入 × 未缓存单价 + 输出 × 输出单价 +（缓存读取 + 缓存写入）× 缓存命中单价，逐笔按**该笔请求发生时刻**的价目计算；
+- **推理/思维 token**：供应商单独上报，官方账单不计费，本插件也不计入金额；
+- **币种基准**：¥ 直接用官方人民币价目；其他货币经汇率换算，与官方人民币账单有结构性差异 —— 对账前切成 ¥；
+- **分钟级延迟**：账本写入有去抖（默认 4 秒），正在流式返回的请求尚未结算；
+- **无价目 token**：显示有多少 token 没匹配到价目（补一条价目即可计入）；
+- **当前覆盖**：对话数、账本行数、插件版本、状态文件路径。
 ## 你会得到什么
 
 ### 1. 输入框下方的 💰 药丸
@@ -115,7 +127,7 @@ dsh plugin add https://github.com/cycycy8520/deepseekHermesCostPlugin
 | 项目归属 | 工作区注册表的 `sessionIds` |
 | 按天分布 | 回溯时按每笔请求自己的时间戳落桶 |
 
-**账本与价表存在插件自己的文件里**：`$DSH_HOME/dsh-cost-meter/state.json`（默认 `~/.dsh/dsh-cost-meter/state.json`），不随插件分发。换一台机器安装，花费从零开始记；把这个文件拷过去即可带走历史。
+**账本与价表存在插件自己的文件里**：`$DSH_HOME/dsh-hermes-cost-meter/state.json`（默认 `~/.dsh/dsh-hermes-cost-meter/state.json`），不随插件分发。换一台机器安装，花费从零开始记；把这个文件拷过去即可带走历史。
 
 ---
 
@@ -129,7 +141,7 @@ dsh plugin add https://github.com/cycycy8520/deepseekHermesCostPlugin
 
 **验证过的版本：`0.2.0-rc.2`。**
 
-**为什么必须 0.2 以上**：0.2 把 `ctx.settings` 换成了 `SettingsForms`（只剩 `describe/update/configure/documentPath/writable`），**`ctx.settings.register(ns, schema)` 不再存在**。本插件原先把账本与价表存在那个命名空间里，在 0.2 上会抛错并被自身的 `try/catch` 吞掉 —— 表现就是「客户端半边照常加载、侧栏有条目，但页面取不到数据」。现已改为**插件自有的存储**：`$DSH_HOME/dsh-cost-meter/state.json`，并通过 `ctx.inject(['connection'])` 注册 `/api/cost/state`、`/api/cost/config`、`/api/cost/backfill` 路由供客户端读取。
+**为什么必须 0.2 以上**：0.2 把 `ctx.settings` 换成了 `SettingsForms`（只剩 `describe/update/configure/documentPath/writable`），**`ctx.settings.register(ns, schema)` 不再存在**。本插件原先把账本与价表存在那个命名空间里，在 0.2 上会抛错并被自身的 `try/catch` 吞掉 —— 表现就是「客户端半边照常加载、侧栏有条目，但页面取不到数据」。现已改为**插件自有的存储**：`$DSH_HOME/dsh-hermes-cost-meter/state.json`，并通过 `ctx.inject(['connection'])` 注册 `/api/cost/state`、`/api/cost/config`、`/api/cost/backfill` 路由供客户端读取。
 
 **0.1.x 未验证**：早期版本里有 `settings.register`，但本插件现在依赖的连接路由载体（`connection.fetch.register` / `sessionQuery.readSession`）是否可用没有测过。要在 0.1.x 上用，先确认这两点。
 
@@ -155,10 +167,10 @@ dsh plugin add https://github.com/cycycy8520/deepseekHermesCostPlugin
 ```sh
 # 1. profile 里有没有这个包
 cat ~/.dsh/profiles/web/package.json
-#    期望：dependencies 里有 "dsh-cost-meter"，dsh.profile.bundles 数组里有 "dsh-cost-meter"
+#    期望：dependencies 里有 "dsh-hermes-cost-meter"，dsh.profile.bundles 数组里有 "dsh-hermes-cost-meter"
 
 # 2. 目录在不在
-ls ~/.dsh/profiles/web/node_modules/dsh-cost-meter
+ls ~/.dsh/profiles/web/node_modules/dsh-hermes-cost-meter
 #    期望：能看到 index.js / client.js / cordis.patch.yml
 ```
 
@@ -243,7 +255,7 @@ node tools/smoke-load.mjs client.js                    # 能加载 ← 保命的
 
 ## 卸载
 
-设置 → 内置插件 → 找到 `dsh-cost-meter` → 卸载。账本与价表配置会留在 `$DSH_HOME/dsh-cost-meter/state.json`（默认 `~/.dsh/dsh-cost-meter/state.json`），需要清理时删掉该文件（或整个目录）即可。
+设置 → 内置插件 → 找到 `dsh-hermes-cost-meter` → 卸载。账本与价表配置会留在 `$DSH_HOME/dsh-hermes-cost-meter/state.json`（默认 `~/.dsh/dsh-hermes-cost-meter/state.json`），需要清理时删掉该文件（或整个目录）即可。
 
 ---
 

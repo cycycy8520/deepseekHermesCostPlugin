@@ -81,6 +81,39 @@ const fresh = mod.resolveConfig(undefined)
 const empty = mod.resolveConfig({ models: [], holidays: [] })
 const junk = mod.resolveConfig({ models: [{ match: '   ' }, null, 7], holidays: 'nope' })
 
+// ------------------------------------------------------------------- budgets
+//
+// A limit drives a warning, so an unusable one must be dropped rather than
+// repaired into a different number: a budget nobody set, that nonetheless warns,
+// is worse than no budget at all.
+const budgets = mod.resolveConfig({
+  budgets: {
+    '': { amount: 100, period: 'month' },
+    w1: { amount: 50, period: 'day' },
+    negative: { amount: -5, period: 'month' },
+    zero: { amount: 0 },
+    nonsense: { amount: 10, period: 'fortnight' },
+    notAnObject: 7,
+  },
+}).budgets
+const budgetKeys = Object.keys(budgets).sort().join(',')
+if (budgetKeys !== ',nonsense,w1') {
+  console.log(`${indexPath}: FAILED — budget normalization kept ${budgetKeys || '(nothing)'}`)
+  process.exit(1)
+}
+if (budgets.nonsense.period !== 'month') {
+  console.log(`${indexPath}: FAILED — an unknown period must fall back to month, got ${budgets.nonsense.period}`)
+  process.exit(1)
+}
+if (budgets[''].amount !== 100 || budgets.w1.period !== 'day') {
+  console.log(`${indexPath}: FAILED — a valid budget was altered`)
+  process.exit(1)
+}
+if (mod.resolveConfig(null).budgets === undefined) {
+  console.log(`${indexPath}: FAILED — resolveConfig must always expose a budgets table`)
+  process.exit(1)
+}
+
 if (fresh === null || typeof fresh !== 'object') {
   console.log(`${indexPath}: FAILED — schema({}) returned ${String(fresh)}`)
   process.exit(1)

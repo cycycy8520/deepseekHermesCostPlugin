@@ -1,8 +1,8 @@
-# Profile layer for dsh-cost-meter.
+# Profile layer for dsh-hermes-cost-meter.
 #
 # `name` is the module the Loader imports, so it must equal this package's
 # `package.json.name`. The install reconciler validates this file parses before
 # adding the package to `dsh.profile.bundles`.
 - insert:
     - id: cost-meter
-      name: 'dsh-cost-meter'
+      name: 'dsh-hermes-cost-meter'

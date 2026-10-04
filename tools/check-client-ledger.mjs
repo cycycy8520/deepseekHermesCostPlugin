@@ -130,7 +130,13 @@ stateDocument = {
   ok: true,
   version: 1,
   revision: 7,
-  config: { ...host.resolveConfig(null), flushMs: 600 },
+  config: {
+    ...host.resolveConfig(null),
+    flushMs: 600,
+    // A visible limit: the panel must show the spend against it, and warn before
+    // it is exceeded rather than only after.
+    budgets: { '': { amount: 2, period: 'all' } },
+  },
   ledger: {
     'session-old': {
       baseline: { cacheRead: 0, cacheMiss: 0, cacheWrite: 0, output: 0 },
@@ -211,7 +217,7 @@ stateDocument = {
   },
 }
 
-runInThisContext(bundle, { filename: 'dsh-cost-meter-client.js' })
+runInThisContext(bundle, { filename: 'dsh-hermes-cost-meter-client.js' })
 if (definition === null) throw new Error('the bundle never called window.__ModuleLoader__.load')
 const client = definition.factory(require)
 client.apply(ctx)
@@ -309,7 +315,7 @@ const check = (label, ok, detail = '') => {
   console.log(`${ok === true ? 'PASS' : 'FAIL'}  ${label}${detail === '' ? '' : `  (${detail})`}`)
 }
 
-check('module id is the package name', definition.id === 'dsh-cost-meter', definition.id)
+check('module id is the package name', definition.id === 'dsh-hermes-cost-meter', definition.id)
 check('inject list dropped remote.settings',
   JSON.stringify(client.inject) === JSON.stringify(['slots', 'locale', 'sessions']), JSON.stringify(client.inject))
 check('state route read once on load', calls.filter(c => c.url === '/api/cost/state' && c.method === 'GET').length === 1)
@@ -400,6 +406,16 @@ check('a baselined session still contributes its duration',
 check('recorded wall time survives a missing host projection',
   accountText.includes('7小时0分'),
   accountText.match(/\d+小时[\d分秒]*/g)?.join(' ') ?? 'no duration rendered')
+
+// A limit drives a warning, so it has to be on screen next to the spend it limits
+// — and the warning has to be a warning, not the same text as a normal figure.
+check('the panel shows the spend against its budget',
+  accountText.includes(zhStrings.budgetTitle) && accountText.includes('¥1.63 / ¥2.00')
+    && accountText.includes('81.6%'),
+  accountText.match(/预算[^。]{0,70}/)?.[0] ?? 'no budget bar')
+check('a budget close to its limit says so',
+  accountText.includes(zhStrings.budgetWarn) && !accountText.includes(zhStrings.budgetOver),
+  accountText.includes(zhStrings.budgetWarn) ? 'warned' : 'not warned')
 
 /** Press the button whose label matches, as a user would. */
 const pressButton = (tree, label) => {
@@ -613,6 +629,16 @@ try {
 check('settings page renders the price table',
   settingsError === null && settingsText.includes('deepseek-v4-pro') && settingsText.includes('deepseek-flash'),
   settingsError === null ? `${settingsText.trim().length} chars` : String(settingsError))
+
+// The budget editor and the reconciliation note are the two things a reader needs
+// in order to set a limit and to trust the number it limits.
+check('the settings page carries the budget editor',
+  settingsText.includes(zhStrings.budgetTitle) && settingsText.includes(zhStrings.budgetAdd)
+    && settingsText.includes(zhStrings.budgetScopeAccount),
+  settingsText.includes(zhStrings.budgetAdd) ? 'editor present' : 'no editor')
+check('the settings page explains how to reconcile with the official bill',
+  settingsText.includes(zhStrings.reconTitle) && settingsText.includes(zhStrings.reconReasoning.slice(0, 12)),
+  settingsText.includes(zhStrings.reconTitle) ? 'reconciliation present' : 'missing')
 
 const pillEntry = registrations.find(item => item.spec?.name === 'conversation.composer.dock')
 let pillText = ''

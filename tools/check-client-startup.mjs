@@ -15,7 +15,7 @@ for (const mode of ['dark', 'light', 'without-match-media']) {
   }
   vm.runInNewContext(source, { window }, { filename: 'client.js' })
   // Must equal the npm package name: the browser module table keys by it.
-  assert.equal(registration.id, 'dsh-cost-meter')
+  assert.equal(registration.id, 'dsh-hermes-cost-meter')
   const plugin = registration.factory(id => {
     if (id === 'react') return { createElement() {}, Component: class {} }
     throw new Error(`unavailable optional module: ${id}`)

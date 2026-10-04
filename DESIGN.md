@@ -393,7 +393,7 @@ DeepSeek 有余额接口 `GET /user/balance`（返回 `total_balance` / `granted
 
 | 层级 | 做法 | 成本 |
 |---|---|---|
-| ① 拷贝文件夹 | 整个 `dsh-cost-meter/` 拷到另一台机器，`install_bundle <路径>` | 零 |
+| ① 拷贝文件夹 | 整个 `dsh-hermes-cost-meter/` 拷到另一台机器，`install_bundle <路径>` | 零 |
 | ② 发 npm 包 | 改 scope/version/license/repository，`npm publish` | 只改元数据 |
 | ③ 并入 DSH 官方仓库 | 移植成 TypeScript + 补测试与 README | 大 |
 
@@ -470,7 +470,7 @@ const DARK_UI = window.matchMedia(...)                                  // 但�
 
 ```
 client.js: loads clean
-  spec id   : @local/dsh-cost-meter
+  spec id   : @local/dsh-hermes-cost-meter
   registers : conversation.composer.dock [id=cost, order=1]
   registers : settings.section [id=cost-report, order=13]
   registers : settings.section [id=cost, order=12]
@@ -628,7 +628,7 @@ interface DshClientManifest {
 
 | 形态 | 示例 |
 |---|---|
-| 包名 | `dsh-cost-meter`（文档约定：`dsh-xxx` 或 `@作者/插件名`）——**本包未发布到 npm，所以这条目前不可用** |
+| 包名 | `dsh-hermes-cost-meter`（文档约定：`dsh-xxx` 或 `@作者/插件名`）——**本包未发布到 npm，所以这条目前不可用** |
 | GitHub 仓库 | `https://github.com/cycycy8520/deepseekHermesCostPlugin` ← **本包的唯一可粘贴字符串** |
 | 本地目录 | 绝对路径 |
 | 压缩包 | 也被识别（`installSubjectTarball`） |
@@ -641,13 +641,13 @@ interface DshClientManifest {
 
 | 项 | 之前 | 现在 |
 |---|---|---|
-| 包名 | `@local/dsh-cost-meter`（本地约定） | **`dsh-cost-meter`**（文档约定的 `dsh-xxx`） |
+| 包名 | `@local/dsh-hermes-cost-meter`（本地约定） | **`dsh-hermes-cost-meter`**（文档约定的 `dsh-xxx`） |
 | `private` | `true` → **挡住 npm 发布** | 已移除 |
 | `dsh.manifestVersion` | 无 | `1` |
 | `engines` | 无 | `dsh: >=0.1.6-alpha.2`, `node: >=22` |
 | `license` / `keywords` / `files` | 无 | 已补 |
-| `cordis.patch.yml` 的 `name` | `@local/dsh-cost-meter` | **`dsh-cost-meter`**（必须等于包名，Loader 按它 import） |
-| `client.js` 的模块 id | `@local/dsh-cost-meter` | **`dsh-cost-meter`**（必须等于包名，浏览器模块表按它查表） |
+| `cordis.patch.yml` 的 `name` | `@local/dsh-hermes-cost-meter` | **`dsh-hermes-cost-meter`**（必须等于包名，Loader 按它 import） |
+| `client.js` 的模块 id | `@local/dsh-hermes-cost-meter` | **`dsh-hermes-cost-meter`**（必须等于包名，浏览器模块表按它查表） |
 | README | 无 | 有，含可直接粘贴的安装串 |
 
 ### 15.6 ⚠️ 打包陷阱：自引用 junction

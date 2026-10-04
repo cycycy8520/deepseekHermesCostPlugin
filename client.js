@@ -20,7 +20,7 @@
 
 window.__ModuleLoader__.load({
   // Must equal the npm package name: the browser module table keys by it.
-  id: 'dsh-cost-meter',
+  id: 'dsh-hermes-cost-meter',
   factory(require) {
     const React = require('react')
     const h = React.createElement
@@ -256,6 +256,8 @@ window.__ModuleLoader__.load({
     const SHARE = { minWidth: 56, textAlign: 'right', color: FAINT, fontSize: size(12) }
     const RULE = { height: 1, background: hairline, margin: '8px 0' }
     const WARN = { color: '#d29343' }
+    /** Over budget says something different from "getting close", and must look it. */
+    const OVER = { color: '#e0685a' }
     const SECTION_TITLE = { fontSize: size(15), fontWeight: 600, margin: '0 0 8px' }
     const GROUP = {
       border: `1px solid ${hairline}`, borderRadius: 10, padding: 12, marginBottom: 14,
@@ -350,6 +352,28 @@ window.__ModuleLoader__.load({
       reportOther: '其他',
       reportNoProject: '未归入项目',
       panelTitle: '花费统计',
+      budgetTitle: '预算',
+      budgetScopeAccount: '账号',
+      budgetScope: '范围',
+      budgetAmount: '金额',
+      budgetPeriod: '周期',
+      budgetPeriodDay: '今日',
+      budgetPeriodMonth: '本月',
+      budgetPeriodAll: '累计',
+      budgetAdd: '添加预算',
+      budgetEmpty: '还没有预算。给账号或某个项目设一个上限，超支会在上方进度条里变红。',
+      budgetWarn: '接近上限',
+      budgetOver: '已超支',
+      budgetHint: '金额与显示货币一致。项目预算按该项目自己的对话计算 —— "这个模块花了多少钱"就是这一行。',
+      reconTitle: '对账口径',
+      reconIntro: '本页所有金额都由插件自己按「每笔请求发生时刻」的价目算出，逐笔累加；下面是它和官方账单可能对不上的地方，先看这里再怀疑数字。',
+      reconFormula: '计费口径：未缓存输入 × 未缓存单价 + 输出 × 输出单价 +（缓存读取 + 缓存写入）× 缓存命中单价。',
+      reconReasoning: '推理/思维 token：供应商单独上报，官方账单不计费，本插件也不计入金额。',
+      reconCurrency: '币种基准：¥ 直接使用官方人民币价目；其他货币按汇率换算，与官方人民币账单会有结构性差异 —— 建议对账时把货币切成 ¥。',
+      reconDelay: '分钟级延迟：账本写入有 {ms} 毫秒去抖，正在流式返回的请求还没结算，所以刚用完的这一刻会偏小。',
+      reconUnpriced: '无价目 token：{count} tok 没有匹配到价目，未计入金额（价目表里补一条即可）。',
+      reconCoverage: '当前覆盖：{rows} 个对话 · 账本 {ledger} 行 · 插件 v{version}。',
+      reconFile: '状态文件：{path}（删掉它等于清空历史）。',
       costAllTime: '花费为全时段',
       reportDrill: '点击下钻',
       costInRange: '花费为所选时间范围',
@@ -482,6 +506,28 @@ window.__ModuleLoader__.load({
       reportOther: 'Other',
       reportNoProject: 'No project',
       panelTitle: 'Spend',
+      budgetTitle: 'Budget',
+      budgetScopeAccount: 'Account',
+      budgetScope: 'Scope',
+      budgetAmount: 'Amount',
+      budgetPeriod: 'Period',
+      budgetPeriodDay: 'Today',
+      budgetPeriodMonth: 'This month',
+      budgetPeriodAll: 'All time',
+      budgetAdd: 'Add a budget',
+      budgetEmpty: 'No budget yet. Set a limit for the account or for one project; going over turns the bar above red.',
+      budgetWarn: 'close to the limit',
+      budgetOver: 'over budget',
+      budgetHint: 'Amounts are in the display currency. A project budget counts that project\'s own conversations — this is the line that answers "what has this module cost me".',
+      reconTitle: 'Reconciliation',
+      reconIntro: 'Every amount here is priced by the plugin at the instant each request ran and summed per call. These are the places it can legitimately disagree with the official bill — check here before doubting a number.',
+      reconFormula: 'Basis: uncached input × uncached rate + output × output rate + (cache read + cache write) × cache-hit rate.',
+      reconReasoning: 'Reasoning tokens: the provider reports them separately, the official bill does not charge for them, and neither does this plugin.',
+      reconCurrency: 'Currency: ¥ is booked straight on the official CNY price list; other currencies go through an exchange rate and carry a structural difference — switch to ¥ before reconciling.',
+      reconDelay: 'Minute-level lag: the ledger write is debounced by {ms} ms and a stream still in flight is not settled, so the last moment reads low.',
+      reconUnpriced: 'Unpriced tokens: {count} tok matched no price entry and is not charged (add a row to the price table to cover it).',
+      reconCoverage: 'Currently covering {rows} conversations · {ledger} ledger rows · plugin v{version}.',
+      reconFile: 'State file: {path} (deleting it clears the history).',
       costAllTime: 'Cost is all-time',
       reportDrill: 'Click to drill down',
       costInRange: 'Cost is within the selected range',
@@ -639,6 +685,8 @@ window.__ModuleLoader__.load({
         let revision = 0
         /** The Host half's version, shown so 'which build am I running' is answerable. */
         let hostVersion = ''
+        /** Absolute path of the Host's state document, shown in the reconciliation block. */
+        let statePath = ''
         let loaded = false
         let version = 0
         let writeTimer = null
@@ -671,6 +719,9 @@ window.__ModuleLoader__.load({
             flushMs: Number.isFinite(value?.flushMs) ? value.flushMs : 4000,
             models,
             holidays: new Set(holidays),
+            // Budgets travel with the configuration and are read by the panel bar,
+            // so dropping them here would silently disable every limit on screen.
+            budgets: value?.budgets !== null && typeof value?.budgets === 'object' ? value.budgets : {},
           }
         }
 
@@ -737,6 +788,7 @@ window.__ModuleLoader__.load({
             readinessDetail = ''
             revision = Number.isFinite(payload.revision) ? payload.revision : 0
             hostVersion = typeof payload.pluginVersion === 'string' ? payload.pluginVersion : ''
+            if (typeof payload.statePath === 'string' && payload.statePath.length > 0) statePath = payload.statePath
             // The settings page edits `view.value` and re-reads it after a save,
             // so the stored document is presented in the shape it already knows.
             view = { ns: NS, value: payload.config, user: payload.config, revision, writable: true }
@@ -1417,9 +1469,15 @@ window.__ModuleLoader__.load({
         function draftFrom(value) {
           const models = Array.isArray(value?.models) ? value.models : []
           const holidays = Array.isArray(value?.holidays) ? value.holidays : []
+          const budgets = value?.budgets !== null && typeof value?.budgets === 'object' ? value.budgets : {}
           return {
             currency: typeof value?.currency === 'string' ? value.currency : 'CNY',
             flushMs: Number.isFinite(value?.flushMs) ? value.flushMs : 4000,
+            budgets: Object.entries(budgets).map(([scope, entry]) => ({
+              scope,
+              amount: Number.isFinite(entry?.amount) ? entry.amount : 0,
+              period: typeof entry?.period === 'string' ? entry.period : 'month',
+            })),
             models: models.map(model => ({
               match: model.match ?? '',
               from: model.from ?? '',
@@ -1474,6 +1532,9 @@ window.__ModuleLoader__.load({
           if (config === null) return h(NotReady, null)
           if (draft === null) return h('div', { style: MUTED }, '…')
 
+          // Reconciliation needs the one figure the settings page cannot derive: how
+          // many tokens were consumed that no price covered.
+          const unpricedTotal = [...ledger.values()].reduce((sum, row) => sum + (row.unpriced ?? 0), 0)
           const allIds = Object.keys(byId)
           // Membership comes from the workspace registry — the same account the
           // composer dialog and the report use — so "this project" cannot mean
@@ -1539,6 +1600,14 @@ window.__ModuleLoader__.load({
             })
             setStatus('')
           }
+          const patchBudget = (index, patch) => {
+            setDraft(current => {
+              const budgets = (current.budgets ?? []).slice()
+              budgets[index] = { ...budgets[index], ...patch }
+              return { ...current, budgets }
+            })
+            setStatus('')
+          }
           const cell = (index, key) => h('input', {
             style: INPUT, value: String(draft.models[index][key] ?? ''),
             onChange: event => patchRow(index, key, event.target.value),
@@ -1579,7 +1648,14 @@ window.__ModuleLoader__.load({
                 setStatus(t('failed', { reason: 'no rows' }))
                 return
               }
-              await write({ models, currency: draft.currency, flushMs: draft.flushMs })
+              // A limit the Host would reject (amount <= 0) is dropped here rather
+              // than saved as a limit of zero, which would read as "over budget".
+              const budgets = {}
+              for (const entry of draft.budgets ?? []) {
+                if (!(entry.amount > 0)) continue
+                budgets[entry.scope] = { amount: entry.amount, period: entry.period }
+              }
+              await write({ models, currency: draft.currency, flushMs: draft.flushMs, budgets })
               await pull(false)
               setDraft(null)
               setStatus(t('saved'))
@@ -1678,13 +1754,101 @@ window.__ModuleLoader__.load({
             ),
 
             h('div', { style: GROUP },
-              h('div', { style: { fontWeight: 600, marginBottom: 6 } }, t('backfillTitle')),
+              h('div', { style: GROUP },
+              h('div', { style: { fontWeight: 600, marginBottom: 8 } }, t('budgetTitle')),
+              h('div', { style: { ...MUTED, marginBottom: 10, maxWidth: 720 } }, t('budgetHint')),
+              (draft.budgets ?? []).length === 0
+                ? h('div', { style: FAINTED }, t('budgetEmpty'))
+                : h('div', null, ...(draft.budgets ?? []).map((entry, index) => h('div', {
+                  key: `${entry.scope}#${String(index)}`,
+                  style: { display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 8 },
+                },
+                  h('select', {
+                    style: { ...SELECT, width: 'min(240px, 100%)' },
+                    value: entry.scope,
+                    onChange: event => patchBudget(index, { scope: event.target.value }),
+                  },
+                    h('option', { value: '', style: OPTION }, t('budgetScopeAccount')),
+                    h('option', { value: NO_PROJECT, style: OPTION }, t('reportNoProject')),
+                    ...items.map(item => h('option', {
+                      key: item?.workspaceId ?? 'none', value: item?.workspaceId ?? '', style: OPTION,
+                    }, `${projectNameOf(items, item?.workspaceId ?? '')} · ${(item?.sessionIds ?? EMPTY_ARRAY).length}`))),
+                  h('input', {
+                    style: { ...INPUT, width: 110, textAlign: 'right' },
+                    inputMode: 'decimal',
+                    value: String(entry.amount ?? ''),
+                    onChange: event => patchBudget(index, { amount: numberOrZero(event.target.value) }),
+                  }),
+                  h('select', {
+                    style: { ...SELECT, width: 130 },
+                    value: entry.period,
+                    onChange: event => patchBudget(index, { period: event.target.value }),
+                  },
+                    h('option', { value: 'day', style: OPTION }, t('budgetPeriodDay')),
+                    h('option', { value: 'month', style: OPTION }, t('budgetPeriodMonth')),
+                    h('option', { value: 'all', style: OPTION }, t('budgetPeriodAll'))),
+                  h('button', {
+                    type: 'button', title: t('remove'), 'aria-label': t('remove'),
+                    style: {
+                      width: 22, height: 22, padding: 0, lineHeight: 1,
+                      border: `1px solid ${hairline}`, borderRadius: 6,
+                      background: 'transparent', color: SOFT,
+                      font: 'inherit', fontSize: size(15), cursor: 'pointer',
+                    },
+                    onClick: () => {
+                      setDraft(current => ({
+                        ...current,
+                        budgets: (current.budgets ?? []).filter((_, at) => at !== index),
+                      }))
+                      setStatus('')
+                    },
+                  }, '×'),
+                ))),
+              h('button', {
+                type: 'button',
+                style: { ...BUTTON, marginTop: 4 },
+                onClick: () => {
+                  // The first scope nobody has a limit for yet, so a new row is
+                  // never a silent duplicate of an existing one.
+                  const used = new Set((draft.budgets ?? []).map(entry => entry.scope))
+                  const free = ['', ...items.map(item => item?.workspaceId ?? ''), NO_PROJECT]
+                    .find(scopeId => !used.has(scopeId))
+                  setDraft(current => ({
+                    ...current,
+                    budgets: [...(current.budgets ?? []), { scope: free ?? '', amount: 100, period: 'month' }],
+                  }))
+                  setStatus('')
+                },
+              }, t('budgetAdd')),
+            ),
+
+            h('div', { style: { ...GROUP, marginTop: 14 } },
+              h('div', { style: { fontWeight: 600, marginBottom: 8 } }, t('reconTitle')),
+              h('div', { style: { ...MUTED, marginBottom: 10, maxWidth: 760 } }, t('reconIntro')),
+              h('div', { style: { display: 'grid', gap: 6 } },
+                ...[
+                  t('reconFormula'),
+                  t('reconReasoning'),
+                  t('reconCurrency'),
+                  t('reconDelay', { ms: config.flushMs }),
+                  t('reconUnpriced', { count: formatExact(unpricedTotal) }),
+                  t('reconCoverage', {
+                    rows: ledger.size,
+                    ledger: ledger.size,
+                    version: hostVersion === '' ? '?' : hostVersion,
+                  }),
+                  statePath === '' ? null : t('reconFile', { path: statePath }),
+                ].filter(Boolean).map((line, index) => h('div', { key: String(index), style: MUTED }, `· ${line}`)),
+              ),
+            ),
+
+            h('div', { style: { fontWeight: 600, marginBottom: 6 } }, t('backfillTitle')),
               h('div', { style: { ...MUTED, marginBottom: 10, maxWidth: 720 } }, t('backfillIntro')),
               h('div', { style: { ...FAINTED, marginBottom: 10, ...(backfillReady === false ? WARN : {}) } },
                 backfillReady === undefined
                   ? '…'
                   : (backfillReady ? t('backfillReady') : t('backfillUnavailable'))
-                  + (hostVersion === '' ? '' : ` · dsh-cost-meter v${hostVersion}`)),
+                  + (hostVersion === '' ? '' : ` · dsh-hermes-cost-meter v${hostVersion}`)),
 
               h('div', { style: { display: 'flex', gap: 18, flexWrap: 'wrap', marginBottom: 10 } },
                 scopeOption('all', t('scopeAll', { count: allIds.length })),
@@ -1994,6 +2158,77 @@ window.__ModuleLoader__.load({
             h(ScopePicker, { value: scope, all, projects, labelOf, onChange: onScope }),
             h('span', { style: { flex: 1 } }),
             h(RangeChips, { value: range, onChange: onRange }),
+          )
+        }
+
+        /**
+         * What a scope has spent inside a budget period.
+         *
+         * The per-day map is the only date-sliceable figure, so `day` and `month`
+         * read it and `all` reads the row total. Every amount was priced at the
+         * instant its own request ran, which is what lets this number be lined up
+         * against the official bill at all.
+         * @param rows - the rows of one scope.
+         * @param period - `'day' | 'month' | 'all'`.
+         * @param today - today's Beijing day key.
+         * @param month - the current Beijing month (`YYYY-MM`).
+         * @returns the spend inside the period.
+         */
+        function spentIn(rows, period, today, month) {
+          if (period === 'all') return rows.reduce((sum, row) => sum + row.cost, 0)
+          let total = 0
+          for (const row of rows) {
+            for (const [day, cell] of Object.entries(row.byDay ?? {})) {
+              if (period === 'day' ? day !== today : !day.startsWith(month)) continue
+              total += cell.cost ?? 0
+            }
+          }
+          return total
+        }
+
+        /** The label a scope is known by, in both the bar and the settings editor. */
+        function scopeLabelOf(scope, items) {
+          if (scope === '') return t('budgetScopeAccount')
+          if (scope === NO_PROJECT) return t('reportNoProject')
+          return projectNameOf(items, scope)
+        }
+
+        /**
+         * The budget bar: the limit, the spend, and how much of the limit is gone.
+         *
+         * "How much has this module cost me" is the question this panel is opened
+         * with, so the limit for whatever scope the view is showing sits above the
+         * figures it limits — account-wide when nothing is drilled into, and that
+         * project's own limit once one is. A budget nobody can see is not a budget.
+         * @param props - `{ label, spent, amount, period, money }`.
+         */
+        function BudgetBar({ label, spent, amount, period, money }) {
+          const ratio = amount > 0 ? spent / amount : 0
+          const level = ratio >= 1 ? OVER : (ratio >= 0.8 ? WARN : undefined)
+          const percent = `${(ratio * 100).toFixed(1)}%`
+          return h('div', { style: { ...GROUP, padding: '10px 14px', marginBottom: 14 } },
+            h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' } },
+              h('span', { style: { fontWeight: 600 } }, t('budgetTitle')),
+              h('span', { style: MUTED }, label),
+              h('span', { style: { flex: 1 } }),
+              h('span', { style: { fontWeight: 600 } }, `${money(spent)} / ${money(amount)}`),
+              h('span', { style: { ...FAINTED, ...(level ?? {}) } },
+                `${percent} · ${t(`budgetPeriod${period[0].toUpperCase()}${period.slice(1)}`)}`
+                + (ratio >= 1 ? ` · ${t('budgetOver')}` : (ratio >= 0.8 ? ` · ${t('budgetWarn')}` : ''))),
+            ),
+            h('div', {
+              style: {
+                height: 6, borderRadius: 3, marginTop: 8, overflow: 'hidden',
+                background: 'color-mix(in srgb, currentColor 14%, transparent)',
+              },
+            },
+              h('div', {
+                style: {
+                  width: `${Math.min(100, Math.max(0, ratio * 100))}%`, height: '100%',
+                  background: 'currentColor', opacity: level === OVER ? 1 : 0.75,
+                  ...(level ?? {}),
+                },
+              })),
           )
         }
 
@@ -2319,6 +2554,10 @@ window.__ModuleLoader__.load({
             })
           }
           const rows = scope === '' ? all : all.filter(row => row.workspaceId === (scope === NO_PROJECT ? '' : scope))
+          // The limit that applies to whatever this view is showing.
+          const budgetToday = dayKey(Date.now())
+          const budgetMonth = budgetToday.slice(0, 7)
+          const budget = config.budgets?.[scope]
 
           const sumBy = (list, pick) => list.reduce((sum, row) => sum + pick(row), 0)
           const totalCost = sumBy(rows, row => row.cost)
@@ -2413,6 +2652,15 @@ window.__ModuleLoader__.load({
               onScope: next => { setScope(next); setPage(0) },
               range,
               onRange: next => { setRange(next); setPage(0) },
+            }),
+
+            // ---- the limit for whatever scope this view is showing
+            budget === undefined ? null : h(BudgetBar, {
+              label: scopeLabelOf(scope, items),
+              spent: spentIn(rows, budget.period, budgetToday, budgetMonth),
+              amount: budget.amount,
+              period: budget.period,
+              money,
             }),
 
             // ---- inside a project, its own calendar comes first: how long the
@@ -2848,6 +3096,10 @@ window.__ModuleLoader__.load({
             })
           }
           const scoped = scope === '' ? all : all.filter(row => row.workspaceId === (scope === NO_PROJECT ? '' : scope))
+          // The limit that applies to whatever this view is showing.
+          const budgetToday = dayKey(Date.now())
+          const budgetMonth = budgetToday.slice(0, 7)
+          const budget = config.budgets?.[scope]
           // A duration figure that silently omits conversations is worse than one
           // that says how many it could not measure.
           const untimed = scoped.filter(row => row.hasStats !== true).length
@@ -2965,6 +3217,15 @@ window.__ModuleLoader__.load({
               onScope: next => { setScope(next); setPage(0) },
               range,
               onRange: next => { setRange(next); setPage(0) },
+            }),
+
+            // ---- the limit for whatever scope this view is showing
+            budget === undefined ? null : h(BudgetBar, {
+              label: scopeLabelOf(scope, items),
+              spent: spentIn(scoped, budget.period, budgetToday, budgetMonth),
+              amount: budget.amount,
+              period: budget.period,
+              money,
             }),
 
             // ---- statistic cards (rule 1: three questions above the fold)
