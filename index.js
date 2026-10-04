@@ -383,11 +383,17 @@ function harnessHome() {
  * @returns the directory name the session store uses for that workspace.
  */
 export function encodeWorkspaceSlug(path) {
-  const escaped = String(path).replace(/[:\\]+/g, '-').split('').map(char => (
-    char.charCodeAt(0) > 127
+  let escaped = ''
+  for (const char of String(path)) {
+    // Separators (`:` and `\`) collapse into one `-`, which is what the store does.
+    if (char === ':' || char === '\\') {
+      if (!escaped.endsWith('-')) escaped += '-'
+      continue
+    }
+    escaped += char.charCodeAt(0) > 127
       ? `~${char.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}`
       : char
-  )).join('')
+  }
   return `--${escaped}--`
 }
 
