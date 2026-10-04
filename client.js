@@ -2386,9 +2386,13 @@ window.__ModuleLoader__.load({
          * with, so the limit for whatever scope the view is showing sits above the
          * figures it limits — account-wide when nothing is drilled into, and that
          * project's own limit once one is. A budget nobody can see is not a budget.
-         * @param props - `{ label, spent, amount, period, segments, money, onSave }`.
+         * The window the limit is measured over is part of the label, and the three
+         * windows are listed underneath: a bar reading "今日" beside a total that reads
+         * all-time looks like the total changed, which is how a correct figure gets
+         * reported as a bug.
+         * @param props - `{ label, spent, amount, period, windows, segments, money, onSave }`.
          */
-        function BudgetBar({ label, spent, amount, period, segments, money, onSave }) {
+        function BudgetBar({ label, spent, amount, period, windows, segments, money, onSave }) {
           const [editing, setEditing] = React.useState(false)
           const [draftAmount, setDraftAmount] = React.useState(amount)
           const [draftPeriod, setDraftPeriod] = React.useState(period)
@@ -2404,11 +2408,12 @@ window.__ModuleLoader__.load({
           return h('div', { style: { ...GROUP, padding: '10px 14px', marginBottom: 14 } },
             h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' } },
               h('span', { style: { fontWeight: 600 } }, t('budgetTitle')),
-              h('span', { style: MUTED }, label),
+              h('span', { style: MUTED },
+                `${label} · ${t(`budgetPeriod${period[0].toUpperCase()}${period.slice(1)}`)}`),
               h('span', { style: { flex: 1 } }),
               h('span', { style: { fontWeight: 600 } }, `${money(spent)} / ${money(amount)}`),
               h('span', { style: { ...FAINTED, ...(level ?? {}) } },
-                `${percent} · ${t(`budgetPeriod${period[0].toUpperCase()}${period.slice(1)}`)}`
+                percent
                 + (ratio >= 1
                   ? ` · ${t('budgetOver')} ${money(spent - amount)}`
                   : (ratio >= 0.8 ? ` · ${t('budgetWarn')}` : ''))),
@@ -2425,6 +2430,12 @@ window.__ModuleLoader__.load({
                 },
               }, editing ? t('budgetCancel') : t('budgetEdit')),
             ),
+            windows === undefined
+              ? null
+              : h('div', { style: { ...FAINTED, marginTop: 6 } },
+                `${t('budgetPeriodDay')} ${money(windows.day)}`
+                + ` · ${t('budgetPeriodMonth')} ${money(windows.month)}`
+                + ` · ${t('budgetPeriodAll')} ${money(windows.all)}`),
             editing
               ? h('div', {
                 style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 8 },
@@ -2945,6 +2956,11 @@ window.__ModuleLoader__.load({
                 amount: budget.amount,
                 period: budget.period,
                 // Every project's share of the same period, coloured like the donut.
+                windows: {
+                  day: spentIn(rows, 'day', budgetToday, budgetMonth),
+                  month: spentIn(rows, 'month', budgetToday, budgetMonth),
+                  all: spentIn(rows, 'all', budgetToday, budgetMonth),
+                },
                 segments: budgetSegmentsOf(
                   rows, budget.period, budgetToday, budgetMonth, id => scopeLabelOf(id, items),
                 ),
@@ -3525,6 +3541,11 @@ window.__ModuleLoader__.load({
                 amount: budget.amount,
                 period: budget.period,
                 // Every project's share of the same period, coloured like the donut.
+                windows: {
+                  day: spentIn(scoped, 'day', budgetToday, budgetMonth),
+                  month: spentIn(scoped, 'month', budgetToday, budgetMonth),
+                  all: spentIn(scoped, 'all', budgetToday, budgetMonth),
+                },
                 segments: budgetSegmentsOf(
                   scoped, budget.period, budgetToday, budgetMonth, id => scopeLabelOf(id, items),
                 ),
