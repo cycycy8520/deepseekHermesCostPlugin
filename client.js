@@ -363,6 +363,10 @@ window.__ModuleLoader__.load({
       budgetAdd: '添加预算',
       budgetUnset: '未设置上限',
       budgetSet: '设置上限',
+      budgetSaving: '保存中…',
+      budgetSaved: '已保存',
+      budgetFailed: '保存失败（见浏览器控制台）',
+      budgetOverBy: '已超支',
       tierNow: '峰谷：当前',
       tierPeak: '高峰（全价）',
       tierOffPeak: '低谷（半价）',
@@ -526,6 +530,10 @@ window.__ModuleLoader__.load({
       budgetAdd: 'Add a budget',
       budgetUnset: 'no limit set',
       budgetSet: 'Set limit',
+      budgetSaving: 'Saving…',
+      budgetSaved: 'Saved',
+      budgetFailed: 'Save failed (see the browser console)',
+      budgetOverBy: 'over by',
       tierNow: 'Peak pricing: now',
       tierPeak: 'peak (full rate)',
       tierOffPeak: 'off-peak (half rate)',
@@ -2221,10 +2229,12 @@ window.__ModuleLoader__.load({
             await write({ ...current, budgets })
             await pull(false)
             notify()
+            return true
           } catch (error) {
             // The input already blocks a non-positive limit, so a failure here is a
             // transport problem rather than user error; keep it off the page.
             console.warn('dsh-cost: budget write failed', error)
+            return false
           }
         }
         /**
@@ -2281,35 +2291,29 @@ window.__ModuleLoader__.load({
         /**
          * The budget line when this scope has no limit yet — with the editor inline.
          *
-         * Two earlier versions of this failed the same way: the bar only appeared once
-         * a budget existed, and the editor lived at the bottom of a long settings page.
-         * Either way the reader — who is looking at the spend, right here — could not
-         * find where a limit is set. So the controls sit in the line itself: pick the
-         * scope, type an amount, pick a period, press set. The settings page keeps its
-         * editor for editing what already exists.
-         * @param props - `{ label, spent, money, items, scope, onSet }`.
+         * Three earlier versions of this failed in three different ways: the bar only
+         * appeared once a budget existed; the editor lived at the bottom of a long
+         * settings page; and the editor offered a scope dropdown whose default did not
+         * follow the view, so setting a limit while looking at a project wrote it to the
+         * account and the line looked inert. The editor now applies to **the scope being
+         * shown** — the label beside it says which — and reports its own outcome, because
+         * a button that appears to do nothing is worse than one that fails loudly.
+         * @param props - `{ label, spent, money, onSave }`; `onSave(amount, period)`.
          */
-        function BudgetHint({ label, spent, money, items, scope, onSet }) {
-          const [target, setTarget] = React.useState(scope)
+        function BudgetHint({ label, spent, money, onSave }) {
           const [amount, setAmount] = React.useState(100)
           const [period, setPeriod] = React.useState('month')
+          const [result, setResult] = React.useState('idle')
+          const save = async () => {
+            setResult('saving')
+            setResult(await onSave(amount, period) ? 'saved' : 'failed')
+          }
           return h('div', { style: { ...GROUP, padding: '10px 14px', marginBottom: 14 } },
             h('div', { style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' } },
               h('span', { style: { fontWeight: 600 } }, t('budgetTitle')),
               h('span', { style: MUTED },
                 `${label} · ${t('budgetSpentAll')} ${money(spent)} · ${t('budgetUnset')}`),
               h('span', { style: { flex: 1 } }),
-              h('select', {
-                style: { ...SELECT, width: 'min(200px, 100%)' },
-                value: target,
-                'aria-label': t('budgetScope'),
-                onChange: event => setTarget(event.target.value),
-              },
-                h('option', { value: '', style: OPTION }, t('budgetScopeAccount')),
-                h('option', { value: NO_PROJECT, style: OPTION }, t('reportNoProject')),
-                ...items.map(item => h('option', {
-                  key: item?.workspaceId ?? 'none', value: item?.workspaceId ?? '', style: OPTION,
-                }, projectNameOf(items, item?.workspaceId ?? '')))),
               h('input', {
                 style: { ...INPUT, width: 100, textAlign: 'right' },
                 inputMode: 'decimal',
@@ -2329,9 +2333,11 @@ window.__ModuleLoader__.load({
               h('button', {
                 type: 'button',
                 style: BUTTON,
-                disabled: !(amount > 0),
-                onClick: () => onSet(target, amount, period),
-              }, t('budgetSet')),
+                disabled: !(amount > 0) || result === 'saving',
+                onClick: () => { void save() },
+              }, result === 'saving' ? t('budgetSaving') : t('budgetSet')),
+              result === 'saved' ? h('span', { style: MUTED }, t('saved')) : null,
+              result === 'failed' ? h('span', { style: WARN }, t('budgetFailed')) : null,
             ),
           )
         }
@@ -2806,9 +2812,7 @@ window.__ModuleLoader__.load({
                 label: scopeLabelOf(scope, items),
                 spent: spentIn(rows, 'all', budgetToday, budgetMonth),
                 money,
-                items,
-                scope,
-                onSet: saveBudget,
+                onSave: (amount, period) => saveBudget(scope, amount, period),
               })
               : h(BudgetBar, {
                 label: scopeLabelOf(scope, items),
@@ -3383,9 +3387,7 @@ window.__ModuleLoader__.load({
                 label: scopeLabelOf(scope, items),
                 spent: spentIn(scoped, 'all', budgetToday, budgetMonth),
                 money,
-                items,
-                scope,
-                onSet: saveBudget,
+                onSave: (amount, period) => saveBudget(scope, amount, period),
               })
               : h(BudgetBar, {
                 label: scopeLabelOf(scope, items),

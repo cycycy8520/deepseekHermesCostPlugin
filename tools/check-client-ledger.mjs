@@ -36,6 +36,13 @@ globalThis.fetch = async (url, options = {}) => {
     const body = JSON.parse(options.body)
     return new Response(JSON.stringify({ ok: true, revision: (body.revision ?? 0) + 1 }), { status: 200, headers: { 'content-type': 'application/json' } })
   }
+  if (url === '/api/cost/config' && method === 'POST') {
+    // The Host merges a config patch and answers the new revision; the stub has to do
+    // the same, or a write that works in the product looks like a 404 here.
+    const body = JSON.parse(options.body)
+    stateDocument = { ...stateDocument, revision: (body.revision ?? 0) + 1, config: { ...stateDocument.config, ...(body.config ?? {}) } }
+    return new Response(JSON.stringify({ ok: true, revision: stateDocument.revision }), { status: 200, headers: { 'content-type': 'application/json' } })
+  }
   if (url === '/api/cost/backfill') {
     return new Response('{"type":"start","total":0}\n{"type":"done","done":0,"total":0}\n', { status: 200, headers: { 'content-type': 'application/x-ndjson' } })
   }
@@ -415,6 +422,7 @@ check('a scope without a budget offers the editor inline',
   accountText.includes(zhStrings.budgetTitle) && accountText.includes(zhStrings.budgetUnset)
     && accountText.includes(zhStrings.budgetSet) && accountText.includes('¥1.63'),
   accountText.match(/预算[^。]{0,80}/)?.[0] ?? 'no budget line')
+
 check('the panel states the current peak tier',
   accountText.includes(zhStrings.tierNow)
     && (accountText.includes(zhStrings.tierPeak) || accountText.includes(zhStrings.tierOffPeak)),
@@ -429,12 +437,34 @@ const pressButton = (tree, label) => {
   return true
 }
 
+
 /** Every element of a rendered tree, flattened. */
 const treeNodes = node => {
   if (node === null || node === undefined || typeof node !== 'object') return []
   if (Array.isArray(node)) return node.flatMap(treeNodes)
   return [node, ...treeNodes(node.children ?? [])]
 }
+// The editor must target the scope being SHOWN and must write it: an editor with its
+// own scope picker defaulted to the account wrote the limit to the wrong scope while
+// the reader was looking at a project, so the line looked inert.
+const budgetButton = treeNodes(accountTree).find(node => node.type === 'button'
+  && flatten(node.children).includes(zhStrings.budgetSet))
+check('the inline editor has a set button', budgetButton !== undefined)
+const configWritesBefore = calls.filter(c => c.url === '/api/cost/config' && c.method === 'POST').length
+budgetButton?.props.onClick()
+await new Promise(resolve => setTimeout(resolve, 30))
+const configWrites = calls.filter(c => c.url === '/api/cost/config' && c.method === 'POST')
+check('setting the limit writes it for the scope on screen',
+  configWrites.length === configWritesBefore + 1
+    && String(configWrites[configWrites.length - 1]?.body ?? '').includes('"budgets"')
+    && String(configWrites[configWrites.length - 1]?.body ?? '').includes('100'),
+  String(configWrites[configWrites.length - 1]?.body ?? '').slice(0, 120))
+// The write must land on the scope the reader is looking at — the account here — and
+// must be the amount they typed.
+check('the limit is stored for the scope on screen',
+  stateDocument.config.budgets?.['']?.amount === 100
+    && stateDocument.config.budgets?.['']?.period === 'month',
+  JSON.stringify(stateDocument.config.budgets ?? null))
 
 // Click the projects tab: the views are peers of one entry, so switching has to
 // work without a reload, and the second render keeps the hook state a click set.
