@@ -256,6 +256,8 @@ window.__ModuleLoader__.load({
     const SHARE = { minWidth: 56, textAlign: 'right', color: FAINT, fontSize: size(12) }
     const RULE = { height: 1, background: hairline, margin: '8px 0' }
     const WARN = { color: '#d29343' }
+    /** How many projects the budget bar names before folding the tail into one row. */
+    const BUDGET_SEGMENTS = 6
     /** Over budget says something different from "getting close", and must look it. */
     const OVER = { color: '#e0685a' }
     const SECTION_TITLE = { fontSize: size(15), fontWeight: 600, margin: '0 0 8px' }
@@ -363,6 +365,10 @@ window.__ModuleLoader__.load({
       budgetAdd: '添加预算',
       budgetUnset: '未设置上限',
       budgetSet: '设置上限',
+      budgetEdit: '修改',
+      budgetSave: '保存',
+      budgetCancel: '取消',
+      budgetSaved: '已保存',
       budgetSaving: '保存中…',
       budgetSaved: '已保存',
       budgetFailed: '保存失败（见浏览器控制台）',
@@ -530,6 +536,10 @@ window.__ModuleLoader__.load({
       budgetAdd: 'Add a budget',
       budgetUnset: 'no limit set',
       budgetSet: 'Set limit',
+      budgetEdit: 'Edit',
+      budgetSave: 'Save',
+      budgetCancel: 'Cancel',
+      budgetSaved: 'Saved',
       budgetSaving: 'Saving…',
       budgetSaved: 'Saved',
       budgetFailed: 'Save failed (see the browser console)',
@@ -2281,6 +2291,35 @@ window.__ModuleLoader__.load({
         }
 
         /**
+         * The budget's per-project split, folded to the top rows plus one remainder.
+         *
+         * Only segments that spent something inside the budget's own period are listed,
+         * and the tail becomes a single `其他` row: a machine with five hundred projects
+         * must not turn the budget line into a five-hundred-row legend. Colors come from
+         * the same series the donut and the rankings use, in the same order, so a segment
+         * can be matched to those charts by colour alone.
+         * @param rows - every row the budget covers.
+         * @param period - `'day' | 'month' | 'all'`.
+         * @param today - today's Beijing day key.
+         * @param month - the current Beijing month.
+         * @param labelOf - maps a scope key to its display name.
+         * @returns `{ label, value, color }[]`, largest first.
+         */
+        function budgetSegmentsOf(rows, period, today, month, labelOf) {
+          const byScope = new Map()
+          for (const row of rows) {
+            const key = row.workspaceId === undefined || row.workspaceId === '' ? NO_PROJECT : row.workspaceId
+            const value = spentIn([row], period, today, month)
+            if (!(value > 0)) continue
+            byScope.set(key, (byScope.get(key) ?? 0) + value)
+          }
+          return topWithOther(
+            [...byScope].map(([key, value]) => ({ label: labelOf(key), value })),
+            BUDGET_SEGMENTS,
+          ).map((segment, index) => ({ ...segment, color: SERIES[index % SERIES.length] }))
+        }
+
+        /**
          * The label a scope is known by, in both the bar and the settings editor. */
         function scopeLabelOf(scope, items) {
           if (scope === '') return t('budgetScopeAccount')
@@ -2349,12 +2388,21 @@ window.__ModuleLoader__.load({
          * with, so the limit for whatever scope the view is showing sits above the
          * figures it limits — account-wide when nothing is drilled into, and that
          * project's own limit once one is. A budget nobody can see is not a budget.
-         * @param props - `{ label, spent, amount, period, money }`.
+         * @param props - `{ label, spent, amount, period, segments, money, onSave }`.
          */
-        function BudgetBar({ label, spent, amount, period, money }) {
+        function BudgetBar({ label, spent, amount, period, segments, money, onSave }) {
+          const [editing, setEditing] = React.useState(false)
+          const [draftAmount, setDraftAmount] = React.useState(amount)
+          const [draftPeriod, setDraftPeriod] = React.useState(period)
+          const [result, setResult] = React.useState('idle')
           const ratio = amount > 0 ? spent / amount : 0
           const level = ratio >= 1 ? OVER : (ratio >= 0.8 ? WARN : undefined)
           const percent = `${(ratio * 100).toFixed(1)}%`
+          // Segments are scaled against the larger of the limit and the spend, so going
+          // over budget shrinks the bar instead of overflowing it; the limit is then
+          // drawn as its own line, which says by how much it was passed.
+          const parts = editing ? [] : (segments ?? []).filter(segment => segment.value > 0)
+          const scale = Math.max(amount, spent, 0.0001)
           return h('div', { style: { ...GROUP, padding: '10px 14px', marginBottom: 14 } },
             h('div', { style: { display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' } },
               h('span', { style: { fontWeight: 600 } }, t('budgetTitle')),
@@ -2363,21 +2411,100 @@ window.__ModuleLoader__.load({
               h('span', { style: { fontWeight: 600 } }, `${money(spent)} / ${money(amount)}`),
               h('span', { style: { ...FAINTED, ...(level ?? {}) } },
                 `${percent} · ${t(`budgetPeriod${period[0].toUpperCase()}${period.slice(1)}`)}`
-                + (ratio >= 1 ? ` · ${t('budgetOver')}` : (ratio >= 0.8 ? ` · ${t('budgetWarn')}` : ''))),
-            ),
-            h('div', {
-              style: {
-                height: 6, borderRadius: 3, marginTop: 8, overflow: 'hidden',
-                background: 'color-mix(in srgb, currentColor 14%, transparent)',
-              },
-            },
-              h('div', {
-                style: {
-                  width: `${Math.min(100, Math.max(0, ratio * 100))}%`, height: '100%',
-                  background: 'currentColor', opacity: level === OVER ? 1 : 0.75,
-                  ...(level ?? {}),
+                + (ratio >= 1
+                  ? ` · ${t('budgetOver')} ${money(spent - amount)}`
+                  : (ratio >= 0.8 ? ` · ${t('budgetWarn')}` : ''))),
+              // A limit nobody can revise is a limit nobody keeps, so it is editable
+              // here rather than only on a settings page.
+              h('button', {
+                type: 'button',
+                style: { ...BUTTON, padding: '2px 10px', fontSize: size(12.5) },
+                onClick: () => {
+                  setDraftAmount(amount)
+                  setDraftPeriod(period)
+                  setResult('idle')
+                  setEditing(value => !value)
                 },
-              })),
+              }, editing ? t('budgetCancel') : t('budgetEdit')),
+            ),
+            editing
+              ? h('div', {
+                style: { display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginTop: 8 },
+              },
+                h('input', {
+                  style: { ...INPUT, width: 100, textAlign: 'right' },
+                  inputMode: 'decimal',
+                  'aria-label': t('budgetAmount'),
+                  value: String(draftAmount),
+                  onChange: event => setDraftAmount(numberOrZero(event.target.value)),
+                }),
+                h('select', {
+                  style: { ...SELECT, width: 120 },
+                  value: draftPeriod,
+                  'aria-label': t('budgetPeriod'),
+                  onChange: event => setDraftPeriod(event.target.value),
+                },
+                  h('option', { value: 'day', style: OPTION }, t('budgetPeriodDay')),
+                  h('option', { value: 'month', style: OPTION }, t('budgetPeriodMonth')),
+                  h('option', { value: 'all', style: OPTION }, t('budgetPeriodAll'))),
+                h('button', {
+                  type: 'button',
+                  style: BUTTON,
+                  disabled: !(draftAmount > 0) || result === 'saving',
+                  onClick: async () => {
+                    setResult('saving')
+                    const ok = await onSave(draftAmount, draftPeriod)
+                    setResult(ok ? 'saved' : 'failed')
+                    if (ok) setEditing(false)
+                  },
+                }, result === 'saving' ? t('budgetSaving') : t('budgetSave')),
+                result === 'saved' ? h('span', { style: MUTED }, t('budgetSaved')) : null,
+                result === 'failed' ? h('span', { style: WARN }, t('budgetFailed')) : null,
+              )
+              : h('div', {
+                style: {
+                  position: 'relative', height: 8, borderRadius: 4, marginTop: 8,
+                  background: 'color-mix(in srgb, currentColor 14%, transparent)', overflow: 'hidden',
+                },
+              },
+                ...(parts.length > 0
+                  ? parts.map((segment, index) => h('div', {
+                    key: `${segment.label}#${String(index)}`,
+                    title: `${segment.label} · ${money(segment.value)}`,
+                    style: {
+                      display: 'inline-block', height: '100%', verticalAlign: 'top',
+                      width: `${(segment.value / scale) * 100}%`, background: segment.color,
+                    },
+                  }))
+                  : [h('div', {
+                    key: 'total',
+                    style: {
+                      height: '100%', width: `${Math.min(100, Math.max(0, ratio * 100))}%`,
+                      background: 'currentColor', opacity: level === OVER ? 1 : 0.75,
+                      ...(level ?? {}),
+                    },
+                  })]),
+                spent > amount
+                  ? h('div', {
+                    style: {
+                      position: 'absolute', top: 0, bottom: 0, width: 2,
+                      left: `${(amount / scale) * 100}%`, background: 'currentColor',
+                    },
+                  })
+                  : null,
+              ),
+            // The legend names what each colour is; the tail is one `其他` row however
+            // many projects it covers.
+            !editing && parts.length > 0
+              ? h('div', { style: { marginTop: 8 } },
+                ...parts.map((segment, index) => h(LegendRow, {
+                  key: `${segment.label}#${String(index)}`,
+                  color: segment.color,
+                  label: segment.label,
+                  text: money(segment.value),
+                  share: `${((segment.value / amount) * 100).toFixed(1)}%`,
+                })))
+              : null,
           )
         }
 
@@ -2819,7 +2946,12 @@ window.__ModuleLoader__.load({
                 spent: spentIn(rows, budget.period, budgetToday, budgetMonth),
                 amount: budget.amount,
                 period: budget.period,
+                // Every project's share of the same period, coloured like the donut.
+                segments: budgetSegmentsOf(
+                  rows, budget.period, budgetToday, budgetMonth, id => scopeLabelOf(id, items),
+                ),
                 money,
+                onSave: (amount, period) => saveBudget(scope, amount, period),
               }),
 
             // ---- inside a project, its own calendar comes first: how long the
@@ -3394,7 +3526,12 @@ window.__ModuleLoader__.load({
                 spent: spentIn(scoped, budget.period, budgetToday, budgetMonth),
                 amount: budget.amount,
                 period: budget.period,
+                // Every project's share of the same period, coloured like the donut.
+                segments: budgetSegmentsOf(
+                  scoped, budget.period, budgetToday, budgetMonth, id => scopeLabelOf(id, items),
+                ),
                 money,
+                onSave: (amount, period) => saveBudget(scope, amount, period),
               }),
 
             // ---- statistic cards (rule 1: three questions above the fold)
