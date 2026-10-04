@@ -333,6 +333,11 @@ window.__ModuleLoader__.load({
       reportTotalCost: '总花费',
       reportTotalTokens: '总 token',
       reportProjects: '项目数',
+      projFirst: '首次活动',
+      projLast: '最近活动',
+      projSpan: '项目跨度',
+      projActiveDays: '活跃天数',
+      projDays: '天',
       reportConversations: '对话数',
       reportByBucket: '花费构成（按计费桶）',
       reportByProject: '项目分布',
@@ -510,6 +515,11 @@ window.__ModuleLoader__.load({
       reportTotalCost: 'Total spend',
       reportTotalTokens: 'Total tokens',
       reportProjects: 'Projects',
+      projFirst: 'First activity',
+      projLast: 'Latest activity',
+      projSpan: 'Project span',
+      projActiveDays: 'Active days',
+      projDays: 'days',
       reportConversations: 'Conversations',
       reportByBucket: 'Spend by billing bucket',
       reportByProject: 'By project',
@@ -2914,6 +2924,22 @@ window.__ModuleLoader__.load({
           const budgetMonth = budgetToday.slice(0, 7)
           const budget = config.budgets?.[scope]
 
+          // Project facts are read from the LEDGER, not from the windowed rows: how long
+          // a project has been going and when it started are all-time facts, and a
+          // seven-day filter must not be able to shrink them. The ledger's per-day map is
+          // the only date source available here, so the figures are day-precise.
+          const projectRows = scope === ''
+            ? []
+            : [...ledger.entries()].filter(([id]) =>
+              (ownerOf.get(id)?.workspaceId ?? '') === (scope === NO_PROJECT ? '' : scope))
+          const projectDays = [...new Set(projectRows.flatMap(([, row]) => Object.keys(row.byDay ?? {})))].sort()
+          const projectFirst = projectDays[0] ?? '—'
+          const projectLast = projectDays[projectDays.length - 1] ?? '—'
+          const projectSpanDays = projectDays.length === 0 ? 0
+            : Math.round((Date.parse(`${projectLast}T00:00:00Z`) - Date.parse(`${projectFirst}T00:00:00Z`)) / 86400000) + 1
+          const projectLlmMs = projectRows.reduce((sum, [, row]) => sum + (row.llmMs ?? 0), 0)
+          const projectToolMs = projectRows.reduce((sum, [, row]) => sum + (row.toolMs ?? 0), 0)
+
           const sumBy = (list, pick) => list.reduce((sum, row) => sum + pick(row), 0)
           const totalCost = sumBy(rows, row => row.cost)
           const totalCredits = sumBy(rows, row => row.credits)
@@ -3050,8 +3076,32 @@ window.__ModuleLoader__.load({
                   label: t('reportTotalCost'),
                 },
                 { value: formatTokens(totalTokens), label: t('reportTotalTokens') },
-                { value: String(projects.length), label: t('reportProjects') },
-                { value: String(rows.length), label: t('reportConversations') },
+                scope === ''
+                  ? { value: String(projects.length), label: t('reportProjects') }
+                  : { value: projectFirst, label: t('projFirst') },
+                scope === ''
+                  ? { value: String(rows.length), label: t('reportConversations') }
+                  : { value: projectLast, label: t('projLast') },
+                // Inside a project the row answers that project's own questions: when it
+                // started, how long it has run, how many days were worked, and the wall
+                // times — the windowed cards above stay about money and tokens.
+                ...(scope === ''
+                  ? []
+                  : [
+                    { value: `${projectSpanDays} ${t('projDays')}`, label: t('projSpan') },
+                    { value: `${projectDays.length} ${t('projDays')}`, label: t('projActiveDays') },
+                    {
+                      value: formatDuration(projectLlmMs),
+                      label: t('dashLlmTime'),
+                      note: range === 'all' ? undefined : t('dashAllTimeOnly'),
+                    },
+                    {
+                      value: formatDuration(projectToolMs),
+                      label: t('dashToolTime'),
+                      note: range === 'all' ? undefined : t('dashAllTimeOnly'),
+                    },
+                    { value: String(projectRows.length), label: t('reportConversations') },
+                  ]),
               ],
             }),
 

@@ -627,6 +627,16 @@ if (projectsTabButton !== undefined) {
       scopedText.includes(zhStrings.dashSpan.split('{')[0].trim()),
       scopedText.includes(zhStrings.dashSpan.split('{')[0].trim()) ? 'span line present' : 'missing')
 
+    // Drilled into a project, the card row must answer that project's own questions:
+    // when it started, how long it has run, how many days were worked, and the wall
+    // times — not the account-wide counts it shows at the top level.
+    check('a drilled-in project gets its own facts in the card row',
+      scopedText.includes(zhStrings.projFirst) && scopedText.includes(zhStrings.projLast)
+        && scopedText.includes(zhStrings.projSpan) && scopedText.includes(zhStrings.projActiveDays)
+        && scopedText.includes(zhStrings.dashToolTime)
+        && !scopedText.includes(zhStrings.projDays + ' ')
+          === false,
+      scopedText.match(/首次活动[^ ]{0,24}/)?.[0] ?? 'no project facts')
     // A limit on screen must be revisable where it is read, and the line has to say
     // which window it measures: a "今日" bar beside an all-time total reads as the
     // total having changed, which is how a correct figure gets reported as a bug.
