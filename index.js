@@ -25,6 +25,7 @@
  */
 
 import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { readdirSync, readFileSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { dirname, join } from 'node:path'
 
@@ -224,7 +225,7 @@ function normalizeByDay(raw) {
 }
 
 /** @returns one ledger row normalized to JSON-safe numbers. */
-function normalizeLedgerRow(raw) {
+function normalizeLedgerRow(raw, sessionId) {
   if (raw === null || typeof raw !== 'object') return undefined
   const buckets = source => {
     const value = source !== null && typeof source === 'object' ? source : {}
@@ -248,14 +249,28 @@ function normalizeLedgerRow(raw) {
     toolMs: isNonNegative(raw.toolMs) ? raw.toolMs : undefined,
     model: typeof raw.model === 'string' ? raw.model : '',
     updatedAt: isNonNegative(raw.updatedAt) ? raw.updatedAt : 0,
+    // Which workspace this session belongs to. A row keeps the workspace it already
+    // carries; otherwise it is resolved from the session store, which is the only
+    // place a spawned child session's project is recorded at all. `undefined` means
+    // "not known", never "no project", so an unknown row is not silently relabelled.
+    workspaceId: typeof raw.workspaceId === 'string' && raw.workspaceId.length > 0
+      ? raw.workspaceId
+      : (sessionId === undefined ? undefined : sessionWorkspace().get(sessionId)),
   }
+}
+
+/** The session-to-workspace map, resolved once per process. */
+let sessionWorkspaceCache
+function sessionWorkspace() {
+  if (sessionWorkspaceCache === undefined) sessionWorkspaceCache = workspaceIdBySession()
+  return sessionWorkspaceCache
 }
 
 function normalizeLedger(raw) {
   if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) return {}
   const ledger = {}
   for (const [sessionId, row] of Object.entries(raw)) {
-    const normalized = normalizeLedgerRow(row)
+    const normalized = normalizeLedgerRow(row, sessionId)
     if (normalized !== undefined) ledger[sessionId] = normalized
   }
   return ledger
@@ -356,6 +371,62 @@ function harnessHome() {
   return join(homedir(), '.dsh')
 }
 
+/**
+ * Reproduce the harness's own directory name for a workspace path.
+ *
+ * A session lives at `sessions/<slug>/<sessionId>/`, where `<slug>` is the workspace
+ * path with separators collapsed to `-` and every non-ASCII code unit written as
+ * `~XXXX`. This function is checked against every workspace on the machine that
+ * reported the bug (three paths, three exact matches) rather than inferred from one
+ * sample, because a wrong slug silently attributes nothing instead of failing loudly.
+ * @param path - a workspace path, as the workspace registry records it.
+ * @returns the directory name the session store uses for that workspace.
+ */
+export function encodeWorkspaceSlug(path) {
+  const escaped = String(path).replace(/[:\\]+/g, '-').split('').map(char => (
+    char.charCodeAt(0) > 127
+      ? `~${char.charCodeAt(0).toString(16).toUpperCase().padStart(4, '0')}`
+      : char
+  )).join('')
+  return `--${escaped}--`
+}
+
+/**
+ * Which workspace each session belongs to, read from the session store itself.
+ *
+ * The workspace registry lists the sessions a workspace owns, and it does not list
+ * spawned child sessions — which is why every subagent's spend landed in "no project"
+ * even though the session was sitting in its parent's workspace directory the whole
+ * time. The directory a session is stored under carries the workspace, so attribution
+ * is resolved from disk: registry path -> uuid, store directory -> session ids.
+ * @returns a `Map<sessionId, workspaceId>`; empty when the store is unreadable, in
+ * which case rows simply keep whatever workspace they already carry.
+ */
+export function workspaceIdBySession() {
+  const map = new Map()
+  try {
+    const home = harnessHome()
+    const registry = JSON.parse(
+      readFileSync(join(home, 'storages', 'workspace.json'), 'utf8'),
+    )
+    const bySlug = new Map()
+    for (const [uuid, entry] of Object.entries(registry?.tables?.workspaces ?? {})) {
+      if (typeof entry?.path === 'string') bySlug.set(encodeWorkspaceSlug(entry.path), uuid)
+    }
+    const root = join(home, 'sessions')
+    for (const slug of readdirSync(root)) {
+      const workspaceId = bySlug.get(slug)
+      if (workspaceId === undefined) continue
+      for (const entry of readdirSync(join(root, slug))) {
+        if (!map.has(entry)) map.set(entry, workspaceId)
+      }
+    }
+  } catch {
+    // Attribution is an enrichment, never a precondition: an unreadable store must
+    // not stop the ledger from loading.
+  }
+  return map
+}
 /** Absolute path of the document this half owns. */
 export function stateFilePath() {
   return join(harnessHome(), 'dsh-hermes-cost-meter', 'state.json')
@@ -511,7 +582,7 @@ function createStore(ctx) {
       let changed = false
       if (patch.ledger !== null && typeof patch.ledger === 'object') {
         for (const [sessionId, row] of Object.entries(patch.ledger)) {
-          const normalized = normalizeLedgerRow(row)
+          const normalized = normalizeLedgerRow(row, sessionId)
           if (normalized === undefined) continue
           document.ledger[sessionId] = normalized
           changed = true

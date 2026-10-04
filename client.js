@@ -2901,7 +2901,9 @@ window.__ModuleLoader__.load({
             // date, which is why they stay all-time figures.
             all.push({
               id,
-              workspaceId: ownerOf.get(id)?.workspaceId ?? '',
+              // The row's own workspace first: a spawned child session is not in any
+              // workspace's sessionIds list, so the list alone cannot place it.
+              workspaceId: row.workspaceId ?? ownerOf.get(id)?.workspaceId ?? '',
               title: labelOf(id),
               cost: windowed.cost,
               credits: windowed.credits,
@@ -3499,7 +3501,9 @@ window.__ModuleLoader__.load({
             if (!hasUsage(figures) && timing === undefined) continue
             all.push({
               id,
-              workspaceId: ownerOf.get(id)?.workspaceId ?? '',
+              // The row's own workspace first: a spawned child session is not in any
+              // workspace's sessionIds list, so the list alone cannot place it.
+              workspaceId: row.workspaceId ?? ownerOf.get(id)?.workspaceId ?? '',
               title: byId[id]?.displayTitle ?? byId[id]?.title ?? id,
               cost: row.cost,
               credits: row.credits,

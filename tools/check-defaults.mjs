@@ -14,7 +14,7 @@
  * Usage: node tools/check-defaults.mjs [index.js]
  */
 
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -217,9 +217,39 @@ for (const row of fresh.models) {
 }
 console.log('  a fresh install needs no price-table editing')
 
+/* ------------------------------------------------- project attribution (host) */
+
+// The slug encoder is what lets a spawned child session be placed in its project: the
+// session store names a workspace's directory with this encoding, and a wrong slug
+// attributes nothing silently. These are the three real workspace paths from the
+// machine that reported the bug, each checked against its real directory name.
+if (mod.encodeWorkspaceSlug('E:\\SPMAN\\md') !== '--E-SPMAN-md--') {
+  fail(`slug for a plain path: ${mod.encodeWorkspaceSlug('E:\\SPMAN\\md')}`)
+}
+if (mod.encodeWorkspaceSlug('E:\\DeepSeek\\小组插件') !== '--E-DeepSeek-~5C0F~7EC4~63D2~4EF6--'
+  || mod.encodeWorkspaceSlug('E:\\脑力填填填') !== '--E-~8111~529B~586B~586B~586B--') {
+  fail(`slug for a non-ASCII path: ${mod.encodeWorkspaceSlug('E:\\DeepSeek\\小组插件')}`)
+}
+// End to end, against a store shaped like the real one: a spawned child session is
+// listed by NO workspace, so the directory it lives in is the only thing that can
+// place it. This is the regression the plugin shipped once already.
+const childId = 'child-session-under-a-workspace'
+const slug = mod.encodeWorkspaceSlug('E:\\SPMAN\\md')
+mkdirSync(join(scratchHome, 'sessions', slug, childId), { recursive: true })
+mkdirSync(join(scratchHome, 'storages'), { recursive: true })
+writeFileSync(join(scratchHome, 'storages', 'workspace.json'), JSON.stringify({
+  tables: { workspaces: { 'uuid-md': { path: 'E:\\SPMAN\\md', title: 'md', sessionIds: [] } } },
+}))
+const attribution = mod.workspaceIdBySession()
+if (!(attribution instanceof Map)) fail('workspaceIdBySession() did not return a map')
+if (attribution.get(childId) !== 'uuid-md') {
+  fail(`an unlisted child session was not attributed to its workspace: ${String(attribution.get(childId))}`)
+}
+console.log(`  project attribution places an unlisted child session (${attribution.size} stored session(s))`)
 if (problems.length > 0) {
   console.log('')
   for (const problem of problems) console.log(`  FAIL ${problem}`)
   process.exitCode = 1
 }
 rmSync(scratchHome, { recursive: true, force: true })
+
