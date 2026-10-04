@@ -627,6 +627,17 @@ if (projectsTabButton !== undefined) {
       scopedText.includes(zhStrings.dashSpan.split('{')[0].trim()),
       scopedText.includes(zhStrings.dashSpan.split('{')[0].trim()) ? 'span line present' : 'missing')
 
+    // A limit on screen must be revisable where it is read, and the line has to say
+    // which window it measures: a "今日" bar beside an all-time total reads as the
+    // total having changed, which is how a correct figure gets reported as a bug.
+    check('a budgeted scope offers an edit button',
+      scopedText.includes(zhStrings.budgetEdit) && /¥0\.13 \/ ¥2\.00/.test(scopedText),
+      scopedText.match(/预算[^。]{0,60}/)?.[0] ?? 'no bar')
+    check('the bar names its window and lists all three',
+      scopedText.includes(zhStrings.budgetPeriodDay) && scopedText.includes(zhStrings.budgetPeriodMonth)
+        && scopedText.includes(zhStrings.budgetPeriodAll),
+      'windows line')
+
     // …and the account view, scoped the same way, must offer the same bar: the
     // back button used to exist on one side only.
     const accountDrill = treeNodes(accountTree).find(node => node.type === 'div'
