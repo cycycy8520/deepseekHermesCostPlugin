@@ -361,6 +361,9 @@ window.__ModuleLoader__.load({
       budgetPeriodMonth: '本月',
       budgetPeriodAll: '累计',
       budgetAdd: '添加预算',
+      budgetUnset: '未设置上限',
+      budgetSpentAll: '累计已花',
+      budgetWhere: '去「设置 → 花费计价 → 预算」加一条，给这个范围设上限',
       budgetEmpty: '还没有预算。给账号或某个项目设一个上限，超支会在上方进度条里变红。',
       budgetWarn: '接近上限',
       budgetOver: '已超支',
@@ -515,6 +518,9 @@ window.__ModuleLoader__.load({
       budgetPeriodMonth: 'This month',
       budgetPeriodAll: 'All time',
       budgetAdd: 'Add a budget',
+      budgetUnset: 'no limit set',
+      budgetSpentAll: 'spent so far',
+      budgetWhere: 'Add one under Settings → Cost → Budget to set a limit for this scope',
       budgetEmpty: 'No budget yet. Set a limit for the account or for one project; going over turns the bar above red.',
       budgetWarn: 'close to the limit',
       budgetOver: 'over budget',
@@ -2194,6 +2200,26 @@ window.__ModuleLoader__.load({
         }
 
         /**
+         * The budget line when this scope has no limit yet.
+         *
+         * The first version of the bar only rendered once a budget existed, so the
+         * feature was invisible to anyone who had not already configured it — the
+         * reader saw nothing at all and had no way to learn where a limit is set.
+         * This line always renders in its place: what the scope has spent, and where
+         * the limit goes.
+         * @param props - `{ label, spent, money }`.
+         */
+        function BudgetHint({ label, spent, money }) {
+          return h('div', {
+            style: { ...FAINTED, display: 'flex', gap: 12, flexWrap: 'wrap', marginBottom: 14 },
+          },
+            h('span', null, `${t('budgetTitle')} · ${label} · ${t('budgetUnset')}`),
+            h('span', null, `${t('budgetSpentAll')} ${money(spent)}`),
+            h('span', null, t('budgetWhere')),
+          )
+        }
+
+        /**
          * The budget bar: the limit, the spend, and how much of the limit is gone.
          *
          * "How much has this module cost me" is the question this panel is opened
@@ -2654,14 +2680,20 @@ window.__ModuleLoader__.load({
               onRange: next => { setRange(next); setPage(0) },
             }),
 
-            // ---- the limit for whatever scope this view is showing
-            budget === undefined ? null : h(BudgetBar, {
-              label: scopeLabelOf(scope, items),
-              spent: spentIn(rows, budget.period, budgetToday, budgetMonth),
-              amount: budget.amount,
-              period: budget.period,
-              money,
-            }),
+            // ---- the limit for whatever scope this view is showing, always visible
+            budget === undefined
+              ? h(BudgetHint, {
+                label: scopeLabelOf(scope, items),
+                spent: spentIn(rows, 'all', budgetToday, budgetMonth),
+                money,
+              })
+              : h(BudgetBar, {
+                label: scopeLabelOf(scope, items),
+                spent: spentIn(rows, budget.period, budgetToday, budgetMonth),
+                amount: budget.amount,
+                period: budget.period,
+                money,
+              }),
 
             // ---- inside a project, its own calendar comes first: how long the
             // work has been going is the question a project view is opened with
@@ -3219,14 +3251,20 @@ window.__ModuleLoader__.load({
               onRange: next => { setRange(next); setPage(0) },
             }),
 
-            // ---- the limit for whatever scope this view is showing
-            budget === undefined ? null : h(BudgetBar, {
-              label: scopeLabelOf(scope, items),
-              spent: spentIn(scoped, budget.period, budgetToday, budgetMonth),
-              amount: budget.amount,
-              period: budget.period,
-              money,
-            }),
+            // ---- the limit for whatever scope this view is showing, always visible
+            budget === undefined
+              ? h(BudgetHint, {
+                label: scopeLabelOf(scope, items),
+                spent: spentIn(scoped, 'all', budgetToday, budgetMonth),
+                money,
+              })
+              : h(BudgetBar, {
+                label: scopeLabelOf(scope, items),
+                spent: spentIn(scoped, budget.period, budgetToday, budgetMonth),
+                amount: budget.amount,
+                period: budget.period,
+                money,
+              }),
 
             // ---- statistic cards (rule 1: three questions above the fold)
             h(StatRow, {

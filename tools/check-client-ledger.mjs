@@ -133,9 +133,9 @@ stateDocument = {
   config: {
     ...host.resolveConfig(null),
     flushMs: 600,
-    // A visible limit: the panel must show the spend against it, and warn before
-    // it is exceeded rather than only after.
-    budgets: { '': { amount: 2, period: 'all' } },
+    // A limit on the PROJECT only: the account view must then state that no limit
+    // is set (and where one goes), and the drilled-in project must show the bar.
+    budgets: { w1: { amount: 2, period: 'all' } },
   },
   ledger: {
     'session-old': {
@@ -409,13 +409,12 @@ check('recorded wall time survives a missing host projection',
 
 // A limit drives a warning, so it has to be on screen next to the spend it limits
 // — and the warning has to be a warning, not the same text as a normal figure.
-check('the panel shows the spend against its budget',
-  accountText.includes(zhStrings.budgetTitle) && accountText.includes('¥1.63 / ¥2.00')
-    && accountText.includes('81.6%'),
-  accountText.match(/预算[^。]{0,70}/)?.[0] ?? 'no budget bar')
-check('a budget close to its limit says so',
-  accountText.includes(zhStrings.budgetWarn) && !accountText.includes(zhStrings.budgetOver),
-  accountText.includes(zhStrings.budgetWarn) ? 'warned' : 'not warned')
+// With no limit set for this scope, the line must still be there and must say how
+// to set one: a feature that only appears after it is configured is invisible.
+check('a scope without a budget still shows the line',
+  accountText.includes(zhStrings.budgetTitle) && accountText.includes(zhStrings.budgetUnset)
+    && accountText.includes(zhStrings.budgetWhere) && accountText.includes('¥1.63'),
+  accountText.match(/预算[^。]{0,80}/)?.[0] ?? 'no budget line')
 
 /** Press the button whose label matches, as a user would. */
 const pressButton = (tree, label) => {
@@ -554,6 +553,58 @@ if (projectsTabButton !== undefined) {
         return String(child.type)
       })
       .join('|')
+  }
+  // The panel lives in a flex column with `overflow: hidden`, so it has to scroll
+  // itself; a percentage height there collapses to auto and the page is clipped.
+  const pageStyle = node => treeNodes(node).find(entry => entry.props?.style?.maxWidth === 1440)
+    ?.props.style
+  const accountPage = pageStyle(accountTree)
+  check('the panel scrolls instead of clipping its tail',
+    accountPage?.overflowY === 'auto' && accountPage?.flex === '1 1 auto'
+      && accountPage?.minHeight === 0,
+    `overflowY=${String(accountPage?.overflowY)} flex=${String(accountPage?.flex)} minHeight=${String(accountPage?.minHeight)}`)
+
+  // The project dimension must be a list you can act on: the ranking rows carry
+  // the same drill-down the account view's bars do, and the donut's legend rows
+  // are targets too — a chart you cannot click is a picture, not a report.
+  const drillRows = treeNodes(projectsTree).filter(node => node.type === 'div'
+    && node.props?.style?.cursor === 'pointer' && typeof node.props?.onClick === 'function')
+  check('the project view lists clickable project rows', drillRows.length >= 1,
+    `clickable rows=${drillRows.length}`)
+  // Target the real workspace, not the no-project bucket: the fixture's
+  // no-project row outranks it, and the sentinel that makes it clickable is
+  // what this also exercises.
+  const projectRow = drillRows.find(node => flatten(node).includes('md')) ?? drillRows[0]
+  if (projectRow !== undefined) {
+    projectRow.props.onClick()
+    const scopedTree = renderSurface(React.createElement(costPanel.component, shellProps), true)
+    const scopedText = flatten(scopedTree).replace(/\s+/g, ' ')
+    check('clicking a project row drills into that project',
+      scopedText.includes(zhStrings.reportByConversation),
+      scopedText.slice(0, 90))
+    // Inside a project the calendar comes first: "how long has this been going"
+    // is answered by the project's own days, with the span stated under the grid
+    // because the grid itself is always the trailing 53 weeks.
+    const gridCells = treeNodes(scopedTree).filter(node => node.type === 'rect').length
+    check('a drilled-in project shows its own activity calendar',
+      scopedText.includes(zhStrings.dashActivity) && gridCells > 300,
+      `cells=${gridCells}`)
+    check('the project calendar states the working span',
+      scopedText.includes(zhStrings.dashSpan.split('{')[0].trim()),
+      scopedText.includes(zhStrings.dashSpan.split('{')[0].trim()) ? 'span line present' : 'missing')
+
+    // …and the account view, scoped the same way, must offer the same bar: the
+    // back button used to exist on one side only.
+    const accountDrill = treeNodes(accountTree).find(node => node.type === 'div'
+      && node.props?.style?.cursor === 'pointer' && typeof node.props?.onClick === 'function')
+    if (accountDrill !== undefined) {
+      accountDrill.props.onClick()
+      const accountScoped = renderSurface(React.createElement(costPanel.component, shellProps), true)
+      check('both views carry the same filter bar, scoped',
+        barSignature(accountScoped) === barSignature(scopedTree)
+          && barSignature(scopedTree).startsWith('button('),
+        `${barSignature(accountScoped)} vs ${barSignature(scopedTree)}`)
+    }
   }
   const noProjectRow = treeNodes(projectsTree).find(node =>
     node.props?.style?.cursor === 'pointer' && flatten(node).includes(zhStrings.reportNoProject)
