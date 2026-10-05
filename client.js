@@ -2330,18 +2330,24 @@ window.__ModuleLoader__.load({
           }, [])
           React.useEffect(() => { void load() }, [load])
           const money = value => formatMoney(value, SYMBOLS[state.balance?.currency] ?? '¥')
+          // "How much money is left" is the most important number this plugin can show,
+          // so it is drawn at the card size (24px, the same as 总花费) rather than as a
+          // line of secondary text. Only the label and the split stay small.
           return h('div', {
             style: {
               display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap',
-              marginBottom: 10, color: SOFT, fontSize: size(14),
+              marginBottom: 10, fontSize: size(14),
             },
           },
-            h('span', null, t('balanceTitle')),
+            h('span', { style: { color: SOFT, fontSize: size(14) } }, t('balanceTitle')),
             state.status === 'ready'
-              ? h('span', { style: { fontWeight: 600, color: 'inherit', fontSize: size(15) } },
-                money(state.balance.total),
-                ` (${t('balanceGranted')} ${money(state.balance.granted)}`
-                + ` · ${t('balanceToppedUp')} ${money(state.balance.toppedUp)})`)
+              ? h('span', { style: { fontSize: size(24), fontWeight: 600, lineHeight: 1.3 } },
+                money(state.balance.total))
+              : null,
+            state.status === 'ready'
+              ? h('span', { style: { ...FAINTED } },
+                `${t('balanceGranted')} ${money(state.balance.granted)}`
+                + ` · ${t('balanceToppedUp')} ${money(state.balance.toppedUp)}`)
               : null,
             state.status === 'unset' ? h('span', null, t('balanceUnset')) : null,
             state.status === 'failed'

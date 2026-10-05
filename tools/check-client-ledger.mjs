@@ -808,6 +808,22 @@ const smallest = allSizes.length === 0 ? undefined : Math.min(...allSizes)
 check('no text in the panel is smaller than 13px',
   smallest !== undefined && smallest >= 13,
   `smallest=${String(smallest)}px of ${allSizes.length} sized nodes`)
+
+// The balance is the one number a reader opens this panel for, so it is pinned at card
+// size: a "how much money is left" figure rendered as 14px secondary text is the defect
+// this asserts against.
+const balanceSizes = treeNodes(accountTree)
+  .filter(node => typeof node.children?.[0] === 'string' || Array.isArray(node.children))
+  .map(node => ({ node, text: flatten(node) }))
+  .filter(entry => zhStrings.balanceTitle === entry.text || entry.text.includes(zhStrings.balanceTitle))
+const biggestBalance = Math.max(0, ...balanceSizes.flatMap(entry =>
+  treeNodes(entry.node)
+    .map(node => /calc\((\d+(?:\.\d+)?)px/.exec(String(node.props?.style?.fontSize ?? ''))?.[1])
+    .filter(value => value !== undefined)
+    .map(Number)))
+check('the balance is drawn at card size',
+  balanceSizes.length > 0 && biggestBalance >= 20,
+  `present=${balanceSizes.length > 0} maxFont=${biggestBalance}px (needs >= 20)`)
 /* ------------------------------------------------- sizing follows the harness */
 
 // The theme publishes the reader's content size; a surface that hard-codes its
