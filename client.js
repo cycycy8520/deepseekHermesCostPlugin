@@ -249,11 +249,11 @@ window.__ModuleLoader__.load({
       boxShadow: '0 10px 30px rgba(0,0,0,.30)',
     }
     const ROW = { display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'baseline' }
-    const MUTED = { color: SOFT, fontSize: size(12.5) }
-    const FAINTED = { color: FAINT, fontSize: size(12) }
+    const MUTED = { color: SOFT, fontSize: size(13.5) }
+    const FAINTED = { color: SOFT, fontSize: size(13) }
     /** Money and share own separate right-aligned columns, so rows scan vertically. */
     const NUMBER = { minWidth: 82, textAlign: 'right', fontWeight: 600, color: 'inherit' }
-    const SHARE = { minWidth: 56, textAlign: 'right', color: FAINT, fontSize: size(12) }
+    const SHARE = { minWidth: 56, textAlign: 'right', color: SOFT, fontSize: size(13) }
     const RULE = { height: 1, background: hairline, margin: '8px 0' }
     const WARN = { color: '#d29343' }
     /** How many projects the budget bar names before folding the tail into one row. */
@@ -272,7 +272,7 @@ window.__ModuleLoader__.load({
     }
     const TH = {
       textAlign: 'left', padding: '2px 5px', fontWeight: 500, color: SOFT,
-      fontSize: size(12), whiteSpace: 'nowrap',
+      fontSize: size(13), whiteSpace: 'nowrap',
     }
     // A native select popup is drawn by the OS, not the page: it inherits none
     // of the page's colours and renders light regardless of the app theme,
@@ -1118,7 +1118,7 @@ window.__ModuleLoader__.load({
             }, notReadyTitle()),
             h('div', { style: { ...FAINTED, marginTop: 8, lineHeight: 1.75 } }, notReadyHint()),
             readinessDetail === '' ? null
-              : h('div', { style: { ...FAINTED, marginTop: 6, fontFamily: 'ui-monospace, monospace', fontSize: size(12) } },
+              : h('div', { style: { ...FAINTED, marginTop: 6, fontFamily: 'ui-monospace, monospace', fontSize: size(13) } },
                 readinessDetail),
             h('button', {
               type: 'button', style: { ...PILL, marginTop: 14 }, onClick: retry,
@@ -1329,7 +1329,7 @@ window.__ModuleLoader__.load({
             },
               h('span', { style: { fontWeight: 700, opacity: 0.85 } }, symbol.trim() || 'cr'),
               h('span', null, label.slice((symbol.trim() || 'cr').length)),
-              entry.unpriced > 0 && h('span', { style: { ...WARN, fontSize: size(12) } }, '•'),
+              entry.unpriced > 0 && h('span', { style: { ...WARN, fontSize: size(13) } }, '•'),
             ),
             open && (ReactDOM?.createPortal !== undefined
               ? ReactDOM.createPortal(panel, document.body)
@@ -2332,13 +2332,13 @@ window.__ModuleLoader__.load({
           const money = value => formatMoney(value, SYMBOLS[state.balance?.currency] ?? '¥')
           return h('div', {
             style: {
-              ...FAINTED, display: 'flex', alignItems: 'baseline', gap: 10,
-              flexWrap: 'wrap', marginBottom: 10,
+              display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap',
+              marginBottom: 10, color: SOFT, fontSize: size(14),
             },
           },
             h('span', null, t('balanceTitle')),
             state.status === 'ready'
-              ? h('span', { style: { fontWeight: 600, color: 'inherit' } },
+              ? h('span', { style: { fontWeight: 600, color: 'inherit', fontSize: size(15) } },
                 money(state.balance.total),
                 ` (${t('balanceGranted')} ${money(state.balance.granted)}`
                 + ` · ${t('balanceToppedUp')} ${money(state.balance.toppedUp)})`)
@@ -2349,7 +2349,7 @@ window.__ModuleLoader__.load({
               : null,
             h('button', {
               type: 'button',
-              style: { ...BUTTON, padding: '1px 8px', fontSize: size(12.5) },
+              style: { ...BUTTON, padding: '1px 8px', fontSize: size(13.5) },
               disabled: state.status === 'loading',
               onClick: () => { void load() },
             }, state.status === 'loading' ? t('balanceLoading') : t('balanceRefresh')),
@@ -2364,8 +2364,13 @@ window.__ModuleLoader__.load({
             : ` · ${tier.offPeak ? t('tierUntilPeak') : t('tierUntilOffPeak')} `
               + formatDuration(tier.minutes * 60000)
           return h('div', {
-            style: { ...FAINTED, marginBottom: 10 },
-          }, `${t('tierNow')} ${label}${when}`)
+            // The tier decides the rate on every token in the table below, so it is body
+            // text, not a footnote — 12px muted grey read as "hidden".
+            style: { color: SOFT, fontSize: size(14), marginBottom: 8 },
+          },
+            `${t('tierNow')} `,
+            h('span', { style: { fontWeight: 600, color: 'inherit' } }, label),
+            when)
         }
 
         /**
@@ -2501,7 +2506,7 @@ window.__ModuleLoader__.load({
               // here rather than only on a settings page.
               h('button', {
                 type: 'button',
-                style: { ...BUTTON, padding: '2px 10px', fontSize: size(12.5) },
+                style: { ...BUTTON, padding: '2px 10px', fontSize: size(13.5) },
                 onClick: () => {
                   setDraftAmount(amount)
                   setDraftPeriod(period)
@@ -2512,7 +2517,7 @@ window.__ModuleLoader__.load({
             ),
             windows === undefined
               ? null
-              : h('div', { style: { ...FAINTED, marginTop: 6 } },
+              : h('div', { style: { color: SOFT, fontSize: size(13.5), marginTop: 6 } },
                 `${t('budgetPeriodDay')} ${money(windows.day)}`
                 + ` · ${t('budgetPeriodMonth')} ${money(windows.month)}`
                 + ` · ${t('budgetPeriodAll')} ${money(windows.all)}`),

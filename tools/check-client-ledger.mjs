@@ -795,6 +795,19 @@ try {
   else globalThis.document = savedDocument
 }
 
+
+// "The text is too small" is a claim about the whole panel, not one line: every size
+// this bundle emits must sit at or above the smallest readable step, so a future line
+// cannot quietly become a footnote. (12px muted grey is what "hidden" looked like.)
+const allSizes = [accountTree, projectsTree]
+  .flatMap(tree => treeNodes(tree).map(node => node.props?.style?.fontSize))
+  .map(value => /calc\((\d+(?:\.\d+)?)px/.exec(String(value ?? ''))?.[1])
+  .filter(value => value !== undefined)
+  .map(Number)
+const smallest = allSizes.length === 0 ? undefined : Math.min(...allSizes)
+check('no text in the panel is smaller than 13px',
+  smallest !== undefined && smallest >= 13,
+  `smallest=${String(smallest)}px of ${allSizes.length} sized nodes`)
 /* ------------------------------------------------- sizing follows the harness */
 
 // The theme publishes the reader's content size; a surface that hard-codes its
