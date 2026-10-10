@@ -474,6 +474,9 @@ const BALANCE_PATH = '/api/cost/balance'
 const BALANCE_URL = 'https://api.deepseek.com/user/balance'
 const BALANCE_KEY = 'DEEPSEEK_API_KEY'
 
+/** How long the provider gets to answer before the line reports a timeout. */
+const BALANCE_TIMEOUT_MS = 10000
+
 /** One JSON response, never cached: every read of a live ledger is fresh. */
 function json(value, status = 200) {
   return new Response(JSON.stringify(value), {
@@ -888,8 +891,11 @@ export function apply(ctx) {
           return json({ ok: false, configured: false, reason: '未配置 DEEPSEEK_API_KEY' })
         }
         try {
+          // A hung provider must not leave the panel saying "checking…" forever: the
+          // timeout turns an unanswerable request into a stated reason.
           const response = await fetch(BALANCE_URL, {
             headers: { authorization: `Bearer ${key}`, accept: 'application/json' },
+            signal: AbortSignal.timeout(BALANCE_TIMEOUT_MS),
           })
           const payload = await response.json().catch(() => null)
           if (!response.ok || payload === null) {
